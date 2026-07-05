@@ -286,6 +286,73 @@ kubectl -n friend-alice exec deployment/ttyd -- cat /opt/data/.test
 
 ---
 
+## Dashboard (Web Management UI)
+
+A web dashboard for managing friends, with state save/restore capabilities.
+
+### Components
+
+| Component | Image | Port | Description |
+|---|---|---|---|
+| dashboard-api | `hermes-friends/dashboard-api:latest` | 8000 | FastAPI backend |
+| dashboard-frontend | `hermes-friends/dashboard-frontend:latest` | 80 | React + Vite + TailwindCSS |
+| postgresql | `postgres:16-alpine` | 5432 | PostgreSQL database |
+| minio | `minio/minio` | 9000/9001 | Object storage for state snapshots |
+
+### API Endpoints
+
+```
+GET    /health                              → health check
+GET    /api/friends                         → list all friends
+GET    /api/friends/{name}                  → friend details
+POST   /api/friends                         → create friend {name, username, password}
+DELETE /api/friends/{name}                  → delete friend (cascading)
+GET    /api/friends/{name}/state            → list state snapshots
+POST   /api/friends/{name}/state/save       → save state to MinIO
+POST   /api/friends/{name}/state/restore    → restore state from snapshot
+```
+
+### State Save/Restore
+
+State save backs up Hermes-relevant files (`/root/.hermes`, `/root/.bashrc`, `/root/.profile`) to MinIO as compressed tarballs. State restore downloads the snapshot and pipes it into the running ttyd pod.
+
+```bash
+# Save state
+curl -X POST http://dashboard.hermes.caron.fun/api/friends/alice/state/save
+
+# List snapshots
+curl http://dashboard.hermes.caron.fun/api/friends/alice/state
+
+# Restore state (latest snapshot)
+curl -X POST http://dashboard.hermes.caron.fun/api/friends/alice/state/restore
+
+# Restore specific snapshot
+curl -X POST "http://dashboard.hermes.caron.fun/api/friends/alice/state/restore?snapshot_key=alice/backup-123456.tar.gz"
+```
+
+### Deployment
+
+```bash
+# Apply all manifests
+kubectl apply -f dashboard/manifests/
+
+# Build and import API image
+cd dashboard/api
+podman build -t localhost/hermes-friends/dashboard-api:latest .
+podman save localhost/hermes-friends/dashboard-api:latest | sudo k3s ctr images import -
+
+# Build and import frontend image
+cd dashboard/frontend
+podman build -t localhost/hermes-friends/dashboard-frontend:latest .
+podman save localhost/hermes-friends/dashboard-frontend:latest | sudo k3s ctr images import -
+```
+
+### Dashboard Access
+
+The dashboard is available at `dashboard.hermes.caron.fun` behind basic auth.
+
+---
+
 ## Troubleshooting
 
 ### Traefik shows "middleware does not exist"
@@ -350,6 +417,10 @@ hermes-k8s/
 ├── manifests/
 │   ├── cyprien_iov/             ← first-friend example (8 YAMLs)
 │   └── _template/               ← generic template for add-friend.sh
+├── dashboard/                   ← web management UI
+│   ├── manifests/               ← k8s manifests (20 YAMLs)
+│   ├── api/                     ← FastAPI backend
+│   └── frontend/                ← React + Vite frontend
 ├── gateway/                     ← yourdomain.com landing page
 │   ├── configmap-index.yaml
 │   ├── deployment.yaml
