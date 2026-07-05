@@ -13,6 +13,21 @@ from services import state_manager, friend_manager
 router = APIRouter(prefix="/api/friends", tags=["state"])
 
 
+# --- Compatibility routes (frontend calls /{name}/save, /{name}/snapshots, /{name}/restore) ---
+
+@router.post("/{name}/save", response_model=StateSaveResponse)
+async def save_state_compat(name: str):
+    return await save_state(name)
+
+@router.get("/{name}/snapshots", response_model=SnapshotListResponse)
+async def list_snapshots_compat(name: str):
+    return await list_snapshots(name)
+
+@router.post("/{name}/restore", response_model=StateRestoreResponse)
+async def restore_state_compat(name: str, snapshot_key: str | None = None):
+    return await restore_state(name, snapshot_key)
+
+
 @router.post("/{name}/state/save", response_model=StateSaveResponse)
 async def save_state(name: str):
     """Save friend state to MinIO."""
