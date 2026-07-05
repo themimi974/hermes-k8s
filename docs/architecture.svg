@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 1100" width="1400" height="1100" font-family="Consolas, monospace">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#333"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#22c55e"/>
+    </marker>
+    <marker id="arrow-blue" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#3b82f6"/>
+    </marker>
+    <marker id="arrow-amber" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#f59e0b"/>
+    </marker>
+  </defs>
+
+  <rect width="1400" height="1100" fill="#0f172a" rx="0"/>
+
+  <text x="700" y="35" text-anchor="middle" fill="#e2e8f0" font-size="18" font-weight="bold">hermes-k8s: Per-User Isolated Subdomains</text>
+  <text x="700" y="55" text-anchor="middle" fill="#64748b" font-size="11">Single-node k3s · Traefik IngressRouteCRDs · Cloudflare DNS-01 Wildcard TLS</text>
+
+  <!-- INTERNET -->
+  <rect x="30" y="80" width="1340" height="70" fill="#0f172a" stroke="#22c55e" stroke-width="2" rx="6"/>
+  <text x="60" y="105" fill="#22c55e" font-size="13" font-weight="bold">☁ Internet</text>
+  <text x="60" y="122" fill="#94a3b8" font-size="10">Cloudflare DNS: *.hermes.caron.fun → 192.168.1.174 (A record, DNS-only — no proxy/tunnel)</text>
+  <text x="60" y="138" fill="#64748b" font-size="10">Cert resolver: cfresolver (Cloudflare API Token, Zone DNS:Edit, automatic renewal)</text>
+
+  <line x1="700" y1="150" x2="700" y2="180" stroke="#22c55e" stroke-width="2" marker-end="url(#arrow-green)"/>
+  <text x="715" y="168" fill="#22c55e" font-size="10">HTTPS/443 (TLS terminated at Traefik)</text>
+
+  <!-- k3s NODE -->
+  <rect x="30" y="180" width="1340" height="880" fill="none" stroke="#475569" stroke-width="2" rx="6"/>
+  <text x="60" y="205" fill="#e2e8f0" font-size="14" font-weight="bold">k3s single-node</text>
+  <text x="60" y="222" fill="#94a3b8" font-size="10">host-004 · 192.168.1.174 · Debian Trixie · k3s v1.36.2+k3s1 · containerd 2.3.2</text>
+
+  <!-- TRAEFIK -->
+  <rect x="60" y="240" width="1280" height="100" fill="#0f172a" stroke="#334155" stroke-width="1.5" rx="4"/>
+  <text x="80" y="265" fill="#38bdf8" font-size="13" font-weight="bold">Traefik</text>
+  <text x="80" y="282" fill="#94a3b8" font-size="10">Namespace: kube-system · Deployment: traefik-7795df7f88-l4q9p</text>
+  <text x="80" y="298" fill="#94a3b8" font-size="10">Entrypoints: web=:8000 → :80 │ websecure=:8443 → :443 │ metrics=:9100</text>
+  <text x="80" y="314" fill="#94a3b8" font-size="10">Cert resolver: cfresolver (Cloudflare DNS-01, email: kron@caron.fun)</text>
+  <text x="80" y="330" fill="#94a3b8" font-size="10">Providers: kubernetescrd + kubernetesingress │ LoadBalancer: 80:32652/443:31643</text>
+
+  <!-- Arrows: Traefik → friends -->
+  <line x1="350" y1="340" x2="350" y2="400" stroke="#3b82f6" stroke-width="1.5" marker-end="url(#arrow-blue)"/>
+  <text x="360" y="370" fill="#3b82f6" font-size="10">HTTP/7681 + WS upgrade</text>
+
+  <line x1="1050" y1="340" x2="1050" y2="400" stroke="#3b82f6" stroke-width="1.5" marker-end="url(#arrow-blue)"/>
+  <text x="1060" y="370" fill="#3b82f6" font-size="10">HTTP/7681 + WS upgrade</text>
+
+  <!-- FRIEND 1: cyprien-iov -->
+  <rect x="60" y="400" width="610" height="415" fill="none" stroke="#6366f1" stroke-width="2" stroke-dasharray="8 4" rx="8"/>
+  <text x="80" y="425" fill="#818cf8" font-size="12" font-weight="bold">Namespace: friend-cyprien-iov</text>
+
+  <rect x="80" y="435" width="570" height="45" fill="#0f172a" stroke="#334155" stroke-width="1" rx="4"/>
+  <text x="95" y="455" fill="#e2e8f0" font-size="11" font-weight="bold">IngressRoute cyprien-iov-vanity</text>
+  <text x="95" y="470" fill="#94a3b8" font-size="10">Host(`cyprien_iov.hermes.caron.fun`) · tls.certResolver: cfresolver</text>
+
+  <rect x="80" y="490" width="570" height="35" fill="#0f172a" stroke="#334155" stroke-width="1" rx="4"/>
+  <text x="95" y="510" fill="#e2e8f0" font-size="11" font-weight="bold">Middleware friend-basic</text>
+  <text x="95" y="522" fill="#94a3b8" font-size="10">basicAuth → secret: friend-htpasswd (APR1)</text>
+
+  <rect x="80" y="535" width="570" height="35" fill="#0f172a" stroke="#334155" stroke-width="1" rx="4"/>
+  <text x="95" y="555" fill="#e2e8f0" font-size="11" font-weight="bold">Service cyprien-iov-ttyd</text>
+  <text x="95" y="567" fill="#94a3b8" font-size="10">ClusterIP 10.43.215.58 → port 7681</text>
+
+  <rect x="80" y="580" width="570" height="70" fill="#0f172a" stroke="#334155" stroke-width="1" rx="4"/>
+  <text x="95" y="600" fill="#e2e8f0" font-size="11" font-weight="bold">Deployment ttyd</text>
+  <text x="95" y="615" fill="#94a3b8" font-size="10">image: localhost/hermes-friends/ttyd:latest · strategy: Recreate (RWO PVC)</text>
+  <text x="95" y="630" fill="#94a3b8" font-size="10">CMD: ttyd -p 7681 -W bash -l · runs as root · tini PID 1</text>
+  <text x="95" y="645" fill="#94a3b8" font-size="10">250m–1 CPU, 256Mi–512Mi · Pod: ttyd-56b85f768-d2nhs 1/1 Running</text>
+
+  <rect x="80" y="660" width="570" height="55" fill="#0c1629" stroke="#22c55e" stroke-width="1.5" rx="4"/>
+  <text x="95" y="680" fill="#22c55e" font-size="11" font-weight="bold">PVC friend-data</text>
+  <text x="95" y="697" fill="#94a3b8" font-size="10">2Gi RWO local-path · mount: /opt/data</text>
+  <text x="95" y="710" fill="#22c55e" font-size="9">⬆ Makes config survive pod restart (emptyDir does NOT)</text>
+
+  <rect x="80" y="725" width="570" height="30" fill="#0f172a" stroke="#334155" stroke-width="1" rx="4"/>
+  <text x="95" y="745" fill="#e2e8f0" font-size="11" font-weight="bold">Secret friend-htpasswd</text>
+
+  <!-- FRIEND 2: abricot -->
+  <rect x="690" y="400" width="610" height="415" fill="none" stroke="#6366f1" stroke-width="2" stroke-dasharray="8 4" rx="8"/>
+  <text x="710" y="425" fill="#818cf8" font-size="12" font-weight="bold">Namespace: friend-abricot</text>
+
+  <rect x="710" y="435" width="570" height="45" fill="#0f172a" stroke="#334155" stroke-width="1" rx="4"/>
+  <text x="725" y="455" fill="#e2e8f0" font-size="11" font-weight="bold">IngressRoute vanity</text>
+  <text x="725" y="470" fill="#94a3b8" font-size="10">Host(`abricot.hermes.caron.fun`) · tls.certResolver: cfresolver</text>
+
+  <rect x="710" y="490" width="570" height="35" fill="#0f172a" stroke="#334155" stroke-width="1" rx="4"/>
+  <text x="725" y="510" fill="#e2e8f0" font-size="11" font-weight="bold">Middleware friend-basic</text>
+  <text x="725" y="522" fill="#94a3b8" font-size="10">basicAuth → secret: friend-htpasswd (APR1)</text>
+
+  <rect x="710" y="535" width="570" height="35" fill="#0f172a" stroke="#334155" stroke-width="1" rx="4"/>
+  <text x="725" y="555" fill="#e2e8f0" font-size="11" font-weight="bold">Service ttyd</text>
+  <text x="725" y="567" fill="#94a3b8" font-size="10">ClusterIP 10.43.116.107 → port 7681</text>
+
+  <rect x="710" y="580" width="570" height="70" fill="#0f172a" stroke="#334155" stroke-width="1" rx="4"/>
+  <text x="725" y="600" fill="#e2e8f0" font-size="11" font-weight="bold">Deployment ttyd</text>
+  <text x="725" y="615" fill="#94a3b8" font-size="10">image: localhost/hermes-friends/ttyd:latest · strategy: Recreate (RWO PVC)</text>
+  <text x="725" y="630" fill="#94a3b8" font-size="10">CMD: ttyd -p 7681 -W bash -l · runs as root · tini PID 1</text>
+  <text x="725" y="645" fill="#94a3b8" font-size="10">250m–1 CPU, 256Mi–512Mi · Pod: ttyd-58bfcfb9f7-br586 1/1 Running</text>
+
+  <rect x="710" y="660" width="570" height="55" fill="#0c1629" stroke="#22c55e" stroke-width="1.5" rx="4"/>
+  <text x="725" y="680" fill="#22c55e" font-size="11" font-weight="bold">PVC friend-data</text>
+  <text x="725" y="697" fill="#94a3b8" font-size="10">2Gi RWO local-path · mount: /opt/data</text>
+  <text x="725" y="710" fill="#22c55e" font-size="9">⬆ Makes config survive pod restart (emptyDir does NOT)</text>
+
+  <rect x="710" y="725" width="570" height="30" fill="#0f172a" stroke="#334155" stroke-width="1" rx="4"/>
+  <text x="725" y="745" fill="#e2e8f0" font-size="11" font-weight="bold">Secret friend-htpasswd</text>
+
+  <!-- GATEWAY -->
+  <rect x="300" y="830" width="800" height="220" fill="none" stroke="#f59e0b" stroke-width="2" stroke-dasharray="8 4" rx="8"/>
+  <text x="320" y="855" fill="#f59e0b" font-size="12" font-weight="bold">Namespace: auth · Gateway</text>
+
+  <rect x="320" y="870" width="760" height="45" fill="#0f172a" stroke="#334155" stroke-width="1" rx="4"/>
+  <text x="340" y="890" fill="#e2e8f0" font-size="11" font-weight="bold">IngressRoute hermes-gateway-vanity</text>
+  <text x="340" y="907" fill="#94a3b8" font-size="10">Host(`hermes.caron.fun`) · tls.certResolver: cfresolver</text>
+
+  <rect x="320" y="925" width="760" height="35" fill="#0f172a" stroke="#334155" stroke-width="1" rx="4"/>
+  <text x="340" y="945" fill="#e2e8f0" font-size="11" font-weight="bold">Middleware hermes-basic</text>
+  <text x="340" y="957" fill="#94a3b8" font-size="10">basicAuth → secret: hermes-htpasswd · removeHeader: true</text>
+
+  <rect x="320" y="970" width="370" height="35" fill="#0f172a" stroke="#334155" stroke-width="1" rx="4"/>
+  <text x="340" y="990" fill="#e2e8f0" font-size="11" font-weight="bold">Service gateway</text>
+  <text x="340" y="1002" fill="#94a3b8" font-size="10">ClusterIP 10.43.240.138 → port 80</text>
+
+  <rect x="710" y="970" width="370" height="35" fill="#0f172a" stroke="#334155" stroke-width="1" rx="4"/>
+  <text x="730" y="990" fill="#e2e8f0" font-size="11" font-weight="bold">Deployment gateway</text>
+  <text x="730" y="1002" fill="#94a3b8" font-size="10">image: nginx:1.27-alpine · static index.html</text>
+
+  <rect x="320" y="1015" width="760" height="30" fill="#0f172a" stroke="#334155" stroke-width="1" rx="4"/>
+  <text x="340" y="1035" fill="#e2e8f0" font-size="11" font-weight="bold">Secret hermes-htpasswd</text>
+
+  <line x1="700" y1="710" x2="700" y2="870" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="6 3" marker-end="url(#arrow-amber)"/>
+  <text x="715" y="800" fill="#f59e0b" font-size="10">HTTP/80</text>
+
+</svg>

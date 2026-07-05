@@ -4,6 +4,8 @@ Per-user isolated Hermes Agent subdomains on a single k3s node. Each friend gets
 
 ## Architecture
 
+See [docs/architecture.svg](docs/architecture.svg) for the precise stack diagram with real resource names.
+
 ```
 Cloudflare (*.yourdomain.com → <node-ip>)
     │
