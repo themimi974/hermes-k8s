@@ -46,7 +46,7 @@ function FriendDetail() {
       const response = await fetch(`${API_BASE}/friends/${name}/snapshots`)
       if (response.ok) {
         const data = await response.json()
-        setSnapshots(data)
+        setSnapshots(data.snapshots || data)
       }
     } catch (err) {
       console.error('Failed to fetch snapshots:', err)
@@ -78,11 +78,10 @@ function FriendDetail() {
     if (!confirm('Are you sure you want to restore this snapshot?')) return
     setActionLoading(true)
     try {
-      const response = await fetch(`${API_BASE}/friends/${name}/restore`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ snapshot_id: snapshotId })
-      })
+      const url = snapshotId
+        ? `${API_BASE}/friends/${name}/restore?snapshot_key=${encodeURIComponent(snapshotId)}`
+        : `${API_BASE}/friends/${name}/restore`
+      const response = await fetch(url, { method: 'POST' })
       if (!response.ok) throw new Error('Failed to restore')
       await fetchFriend()
       alert('Restored successfully!')
@@ -201,16 +200,13 @@ function FriendDetail() {
           ) : (
             <div className="space-y-3">
               {snapshots.map(snapshot => (
-                <div key={snapshot.id} className="bg-gray-700 rounded-lg p-4 flex items-center justify-between">
+                <div key={snapshot.key} className="bg-gray-700 rounded-lg p-4 flex items-center justify-between">
                   <div>
-                    <div className="font-medium text-white">{snapshot.id}</div>
-                    <div className="text-sm text-gray-400">{new Date(snapshot.created_at).toLocaleString()}</div>
-                    {snapshot.description && (
-                      <div className="text-sm text-gray-300 mt-1">{snapshot.description}</div>
-                    )}
+                    <div className="font-medium text-white">{snapshot.key}</div>
+                    <div className="text-sm text-gray-400">{new Date(snapshot.last_modified).toLocaleString()}</div>
                   </div>
                   <button
-                    onClick={() => handleRestore(snapshot.id)}
+                    onClick={() => handleRestore(snapshot.key)}
                     disabled={actionLoading}
                     className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
                   >
