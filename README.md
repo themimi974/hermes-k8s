@@ -1,122 +1,371 @@
-# hermes-friends — Per-user isolated subdomains on k3s
+# hermes-k8s
+
+Per-user isolated Hermes Agent subdomains on a single k3s node. Each friend gets their own terminal shell behind `<friend>.yourdomain.com`, with a central gateway at `yourdomain.com`.
 
 ## Architecture
 
 ```
-*.hermes.caron.fun  →  Cloudflare DNS →  Traefik (k3s IngressRouteCRD)
-                                            │
-                    ┌───────────────────────┤
-                    │                       │
-              hermes.caron.fun       <friend>.hermes.caron.fun
-              (gateway pod)          (friend ttyd pod)
-              nginx + index.html     bash -l via ttyd :7681
-              hermes-basic mw        friend-basic mw
+Cloudflare (*.yourdomain.com → <node-ip>)
+    │
+    ▼
+Traefik (k3s IngressRouteCRDs)
+  ┌─────────┴──────────┐
+  │                    │
+yourdomain.com    <friend>.yourdomain.com
+(gateway)         (ttyd pod)
+nginx + creds     bash -l, /opt/data PVC
 ```
 
-- **Cloudflare DNS-01** certs via `cfresolver` (wildcard `*.hermes.caron.fun`).
-- **Traefik IngressRouteCRD** (not Ingress): per-friend IR + per-friend Middleware (labelled `traefik=enabled`).
-- **No shared PVCs.** Each friend gets 2Gi `local-path` PVC mounted at `/opt/data` inside the ttyd container.
-- **Gateway** at `hermes.caron.fun` is a static nginx ConfigMap-served HTML page listing all friends + their creds. Authenticated with the original `hermes-basic` middleware.
+- **TLS**: Wildcard cert via Cloudflare DNS-01 challenge (automatic renewal)
+- **Auth**: Per-friend basicAuth via Traefik CRD Middlewares
+- **Storage**: 2Gi `local-path` PVC per friend, mounted at `/opt/data`
+- **Image**: Custom `debian:trixie` + Node 20 + ttyd + Hermes Agent
 
-## File layout
+---
+
+## Prerequisites
+
+| Requirement | Why |
+|---|---|
+| **Debian 12+ or Fedora 40+ VM** | k3s target |
+| **Cloudflare account** with a domain | DNS-01 wildcard certs |
+| **Cloudflare API Token** | Permissions: Zone > DNS > Edit (for your domain) |
+| **Node IP accessible from internet** | Port 80/443 open to Cloudflare |
+| **Root or sudo access** | k3s install, package management |
+| **podman or docker** | Build the ttyd image |
+
+---
+
+## Step-by-Step Deployment
+
+### Step 1: Clone the repo
+
+```bash
+cd ~
+git clone git@github.com:themimi974/hermes-k8s.git
+cd hermes-k8s
+```
+
+### Step 2: Install k3s
+
+```bash
+# Install k3s (Traefik is enabled by default)
+curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--write-kubeconfig-mode 0640" sh -
+
+# Make kubectl accessible without sudo (add your user to the k3s config group)
+sudo chown root:$(id -gn) /etc/rancher/k3s/k3s.yaml
+# Or for a user not in the k3s group:
+# sudo chmod 644 /etc/rancher/k3s/k3s.yaml
+
+# Wait for node to be ready
+kubectl get nodes --watch
+# Press Ctrl+C when STATUS shows "Ready"
+
+# Verify Traefik is running
+kubectl -n kube-system get pods -l app.kubernetes.io/name=traefik
+```
+
+### Step 3: Create the Cloudflare API token secret
+
+```bash
+# Replace with your actual Cloudflare API token
+# The token needs: Zone > DNS > Edit permission for your domain
+echo -n "YOUR_CLOUDFLARE_API_TOKEN" | kubectl create secret generic cloudflare-api-token \
+  --from-literal=CF_DNS_API_TOKEN=/dev/stdin \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+### Step 4: Configure Traefik with Cloudflare DNS-01
+
+```bash
+# Replace YOUR_EMAIL with your Cloudflare account email
+cat <<'EOF' | kubectl apply -f -
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  chart: traefik
+  repo: https://traefik.github.io/charts
+  version: 40.1.3
+  valuesContent: |-
+    providers:
+      kubernetesCRD:
+        enabled: true
+        allowEmptyServices: true
+      kubernetesIngress:
+        enabled: true
+        allowEmptyServices: true
+    entryPoints:
+      web:
+        port: 8000
+      websecure:
+        port: 8443
+        http:
+          tls:
+            certResolver: cfresolver
+    certificatesResolvers:
+      cfresolver:
+        acme:
+          email: YOUR_EMAIL
+          dnsChallenge:
+            provider: cloudflare
+            envFromSecret: cloudflare-api-token
+          storage: /data/acme.json
+    logs:
+      access:
+        enabled: true
+        fields:
+          headers:
+            names:
+              X-Forwarded-Proto: keep
+              X-Forwarded-Host: keep
+              X-Forwarded-For: keep
+EOF
+
+# Wait for Traefik to pick up the new config
+kubectl -n kube-system rollout status deployment/traefik --timeout=120s
+```
+
+### Step 5: Configure DNS in Cloudflare
+
+In your Cloudflare dashboard, add these DNS records:
+
+| Type | Name | Content | Proxy |
+|---|---|---|---|
+| A | `@` | `<node-ip>` | DNS only (gray cloud) |
+| A | `*` | `<node-ip>` | DNS only (gray cloud) |
+
+> **Important**: Use "DNS only" (gray cloud), not "Proxied" (orange cloud).
+> Traefik handles TLS termination; Cloudflare should not proxy the traffic.
+
+### Step 6: Build and import the ttyd image
+
+```bash
+# Install podman if not present
+# Debian: sudo apt install podman
+# Fedora: sudo dnf install podman
+
+# Build the image (takes ~2-3 minutes on first build)
+podman build -t hermes-friends/ttyd:latest .
+
+# Export and import into k3s containerd (needs sudo for the k3s socket)
+podman save hermes-friends/ttyd:latest | sudo k3s ctr images import -
+
+# Verify
+sudo k3s ctr images list | grep ttyd
+# Should show: localhost/hermes-friends/ttyd:latest
+```
+
+### Step 7: Create the auth namespace + gateway htpasswd
+
+```bash
+kubectl create namespace auth
+
+# Create the gateway htpasswd secret (replace admin:Test1234 with your own)
+# Generate the hash: openssl passwd -apr1 -salt mysalt yourpassword
+GW_HASH=$(openssl passwd -apr1 -salt gateway AdminPass123)
+echo -n "admin:$GW_HASH" | kubectl create secret generic hermes-htpasswd \
+  --from-literal=users=/dev/stdin \
+  --namespace=auth \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+### Step 8: Apply the gateway
+
+```bash
+# Replace hermes.caron.fun with your actual domain
+sed -i 's/hermes\.caron\.fun/YOUR_DOMAIN/g' gateway/ingressroute.yaml
+
+kubectl apply -f gateway/
+
+# Wait for nginx to start
+kubectl -n auth rollout status deployment/gateway --timeout=60s
+```
+
+### Step 9: Add your first friend
+
+```bash
+bash scripts/add-friend.sh alice alice 'your-password'
+```
+
+This creates everything in one go:
+- Namespace `friend-alice`
+- PersistentVolumeClaim (2Gi)
+- htpasswd Secret
+- Traefik Middleware (basicAuth)
+- Deployment (ttyd pod)
+- Service (ClusterIP :7681)
+- IngressRoute (`alice.yourdomain.com` → ttyd:7681 + TLS)
+- Updates gateway registry
+
+### Step 10: Update manifests for your domain
+
+Replace the domain in the cyprien_iov manifests (or any friend manifests):
+
+```bash
+sed -i 's/hermes\.caron\.fun/YOUR_DOMAIN/g' manifests/*/07-ingressroute.yaml
+sed -i 's/hermes\.caron\.fun/YOUR_DOMAIN/g' manifests/_template/06-ingressroute.yaml
+sed -i 's/hermes\.caron\.fun/YOUR_DOMAIN/g' gateway/ingressroute.yaml
+```
+
+### Step 11: Verify everything works
+
+```bash
+# Test the friend endpoint (expect 401 first)
+curl -sk -o /dev/null -w "%{http_code}" https://alice.YOUR_DOMAIN/
+# 401
+
+# Test with credentials (expect 200 + ttyd HTML)
+curl -sk -u 'alice:your-password' https://alice.YOUR_DOMAIN/
+# 200 (ttyd HTML)
+
+# Test the gateway (expect 401)
+curl -sk -o /dev/null -w "%{http_code}" https://YOUR_DOMAIN/
+# 401
+
+# Test the gateway with credentials (expect 200)
+curl -sk -u 'admin:AdminPass123' https://YOUR_DOMAIN/
+# 200 (landing page)
+```
+
+---
+
+## Adding More Friends
+
+```bash
+# Add a friend
+bash scripts/add-friend.sh <name> <username> <password>
+
+# Example
+bash scripts/add-friend.sh bob bob 'hunter2'
+
+# Update gateway to show the new friend
+bash scripts/gateway-sync.sh
+```
+
+Each friend gets:
+- Their own subdomain: `<name>.yourdomain.com`
+- Their own Kubernetes namespace: `friend-<name>`
+- Their own persistent storage: 2Gi PVC at `/opt/data`
+- Their own Traefik basicAuth middleware
+
+---
+
+## Removing a Friend
+
+```bash
+bash scripts/remove-friend.sh bob
+```
+
+This deletes:
+- Namespace `friend-bob` (cascading: all resources inside)
+- Removes from gateway registry
+- Restarts gateway
+
+---
+
+## Persistence Test
+
+Files in `/opt/data` survive pod restarts:
+
+```bash
+# Write a test file
+kubectl -n friend-alice exec deployment/ttyd -- sh -c 'echo "test" > /opt/data/.test'
+
+# Kill the pod
+kubectl -n friend-alice delete pod -l app=ttyd
+
+# After respawn (~10s), verify
+kubectl -n friend-alice exec deployment/ttyd -- cat /opt/data/.test
+# Should output: test
+```
+
+---
+
+## Troubleshooting
+
+### Traefik shows "middleware does not exist"
+
+Ensure your IngressRoute references middlewares with `name` + `namespace`:
+
+```yaml
+# Correct (CRD middleware)
+middlewares:
+  - name: friend-basic
+    namespace: friend-alice
+
+# Wrong (file provider, won't work)
+middlewares:
+  - name: friend-basic@file
+```
+
+### Pod stuck in ImagePullBackOff
+
+The image is local-only. Ensure:
+1. Image was imported: `sudo k3s ctr images list | grep ttyd`
+2. Deployment uses `localhost/` prefix and `imagePullPolicy: Never`
+
+### TLS cert not issuing
+
+Check Traefik logs:
+```bash
+kubectl -n kube-system logs deployment/traefik --tail=50 | grep -i acme
+```
+
+Common issues:
+- Cloudflare API token doesn't have DNS:Edit permission
+- DNS record not set to "DNS only" (gray cloud)
+- Email in HelmChart doesn't match Cloudflare account
+
+### Namespace creation fails with "invalid"
+
+Kubernetes namespace names must be lowercase alphanumeric + hyphens only. No underscores.
+
+### PVC won't mount
+
+Check PVC status:
+```bash
+kubectl -n friend-alice get pvc friend-data
+```
+
+If stuck in Pending, ensure `local-path` StorageClass exists:
+```bash
+kubectl get storageclass
+```
+
+---
+
+## File Layout
 
 ```
-~/workspace/hermes-friends/
-├── README.md                          ← this file
+hermes-k8s/
+├── README.md                    ← this file
+├── REPORT.md                    ← project report
+├── Dockerfile                   ← ttyd image build
+├── .gitignore                   ← excludes secrets
 ├── manifests/
-│   ├── cyprien_iov/                   ← first-friend (POC migration)
-│   │   ├── 00-namespace.yaml
-│   │   ├── 01-quota.yaml
-│   │   ├── 02-data-pvc.yaml
-│   │   ├── 03-htpasswd.yaml
-│   │   ├── 04-middleware.yaml
-│   │   ├── 05-deployment.yaml
-│   │   ├── 06-service.yaml
-│   │   └── 07-ingressroute.yaml
-│   └── _template/                     ← generic; sed'd by add-friend.sh
-│       ├── 00-namespace.yaml          (__NAME__, __HOST__, __B64USERS__)
-│       ├── 01-data-pvc.yaml
-│       ├── 02-htpasswd.yaml
-│       ├── 03-middleware.yaml
-│       ├── 04-deployment.yaml
-│       ├── 05-service.yaml
-│       └── 06-ingressroute.yaml
-├── gateway/
-│   ├── configmap-index.yaml           ← base template (empty friends)
-│   ├── deployment.yaml                ← nginx pod
-│   ├── service.yaml                   ← ClusterIP :80
-│   ├── ingressroute.yaml              ← hermes.caron.fun → gateway
-│   └── registry.yaml                  ← friends-registry ConfigMap (JSON array)
+│   ├── cyprien_iov/             ← first-friend example (8 YAMLs)
+│   └── _template/               ← generic template for add-friend.sh
+├── gateway/                     ← yourdomain.com landing page
+│   ├── configmap-index.yaml
+│   ├── deployment.yaml
+│   ├── service.yaml
+│   ├── ingressroute.yaml
+│   └── registry.yaml
 └── scripts/
-    ├── add-friend.sh <name> <user> <pass>   ← idempotent full provision
-    ├── remove-friend.sh <name>              ← teardown (namespace + registry)
-    └── gateway-sync.sh                      ← registry → nginx ConfigMap → restart
+    ├── add-friend.sh            ← idempotent full provision
+    ├── remove-friend.sh         ← teardown
+    ├── gateway-sync.sh          ← registry → nginx
+    └── import-image.sh          ← podman → k3s containerd
 ```
 
-## Quick start — adding a friend
+---
 
-```bash
-cd ~/workspace/hermes-friends
-bash scripts/add-friend.sh alice alice 'hunter2'
-```
+## Security Notes
 
-What it does (fully idempotent):
-1. Creates namespace `friend-alice` with resource quota (1Gi/2Gi mem, 4 CPU, 5 pods)
-2. PVC `friend-data` (2Gi, `local-path`)
-3. Secret `friend-htpasswd` with `alice:$apr1$...`
-4. Middleware `friend-basic` (labelled `traefik=enabled`)
-5. Deployment `ttyd` (`hermes-friends/ttyd:latest`) → PVC `/opt/data`
-6. Service `ttyd` (ClusterIP :7681)
-7. IngressRoute `vanity` → `alice.hermes.caron.fun` → `friend-basic@file` → `ttyd:7681` + `cfresolver` TLS
-8. Updates `friends-registry` ConfigMap → re-syncs gateway nginx → restarts gateway pod
-
-## Removing a friend
-
-```bash
-bash scripts/remove-friend.sh alice
-```
-
-Deletes the entire `friend-alice` namespace (cascading: svc, deploy, pvc, secret, middleware, IR). Removes from registry. Restarts gateway.
-
-## Provisioning cyprien_iov (first friend, migration from POC)
-
-```bash
-# 1. Apply cyprien_iov manifests
-kubectl apply -f manifests/cyprien_iov/
-
-# 2. Wait for pod
-kubectl -n friend-cyprien_iov rollout status deployment/ttyd --timeout=120s
-
-# 3. Remove cyprien_iov from the old hermes-htpasswd secret in auth namespace
-kubectl -n auth get secret hermes-htpasswd -o json | \
-  jq 'del(.data.users)' | kubectl replace -f -
-# (or just delete the secret if hermes-basic middleware can tolerate empty —
-#  the middleware definition in hermes-vanity will 401 everyone, which is fine
-#  since cyprien_iov now has its own middleware)
-
-# 4. Verify
-curl -u 'cyprien_iov:Test1234' -kI https://cyprien_iov.hermes.caron.fun/
-# Expect: HTTP/2 200 (after basic-auth challenge)
-```
-
-## Persistence test
-
-```bash
-# From the ttyd shell:
-hermes setup   # walk through first-time config, confirm /opt/data is used
-
-# Kill the pod:
-kubectl -n friend-cyprien_iov delete pod -l app=ttyd
-
-# Wait for respawn, re-open ttyd at https://cyprien_iov.hermes.caron.fun/
-# hermes config is still in /opt/data — PVC persisted the data.
-```
-
-## Gotchas
-
-1. **`sudo -S` doesn't work in this SSH shell** — use the kubeconfig at `/etc/rancher/k3s/k3s.yaml` directly (group `admin`, mode `0640`).
-2. **Recreate strategy** — PVC is RWO (`local-path`); the Deployment uses `strategy: Recreate` so the old pod releases the volume before the new one binds.
-3. **No credential rotation** — test environment, explicitly accepted.
-4. **No TLS on ttyd port 7681** — TLS termination is at Traefik. All traffic to ttyd is in-cluster.
-5. **Image push required** — `hermes-friends/ttyd:latest` must exist in the k3s containerd store. Load it via: `sudo k3s ctr images import ttyd.tar` or use a local registry.
-6. **Single-node k3s** — no scheduling constraints. PVCs and pods always land on the same node.
+- **No credentials in repo**: htpasswd secrets are sanitized before commit
+- **Test environment**: credential rotation not implemented (by design)
+- **TLS everywhere**: Traefik terminates TLS, traffic inside cluster is unencrypted (localhost only)
+- **Cloudflare token**: stored in Kubernetes Secret, not in repo
