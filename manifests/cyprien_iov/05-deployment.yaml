@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ttyd
+  namespace: friend-cyprien-iov
+  labels:
+    app: ttyd
+    friend: cyprien-iov
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # PVC is RWO; rolling update would fail
+  selector:
+    matchLabels:
+      app: ttyd
+      friend: cyprien-iov
+  template:
+    metadata:
+      labels:
+        app: ttyd
+        friend: cyprien-iov
+    spec:
+      containers:
+        - name: ttyd
+          image: localhost/hermes-friends/ttyd:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 7681
+          readinessProbe:
+            tcpSocket:
+              port: 7681
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 7681
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: 1
+              # 2Gi limit on /opt/data; ttyd itself uses little.
+              memory: 512Mi
+          volumeMounts:
+            - name: friends-data
+              mountPath: /opt/data
+      volumes:
+        - name: friends-data
+          persistentVolumeClaim:
+            claimName: friend-data
+      # Per the brief: root in the Dockerfile matches the no-priv-drop entrypoint.
+      # /opt/data on the PVC gives real persistence across pod reschedules.

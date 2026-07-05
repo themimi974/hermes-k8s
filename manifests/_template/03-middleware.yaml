@@ -1,0 +1,10 @@
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: friend-basic
+  namespace: friend-__NAME__
+  labels:
+    traefik: enabled
+spec:
+  basicAuth:
+    secret: friend-htpasswd

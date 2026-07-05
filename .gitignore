@@ -1,0 +1,16 @@
+# Credentials / secrets
+*.pem
+*.key
+.env
+.htpasswd
+
+# Kubernetes secrets with base64-encoded passwords — never commit to public repos
+# The friend htpasswd secrets contain APR1 hashes
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.tar
+/tmp/

@@ -1,0 +1,13 @@
+# Tiny registry the gateway ConfigMap renders into index.html at sync time.
+# add-friend.sh / remove-friend.sh update this; gateway-deploy.sh then
+# regenerates the nginx configmap with the latest entries and `kubectl
+# rollout restart`s the gateway deployment.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: friends-registry
+  namespace: auth
+data:
+  # JSON array of {host, user, pass, namespace}. add-friend.sh appends entries
+  # via kubectl patch --type=json, preserving idempotency via the host key.
+  friends.json: "[]"

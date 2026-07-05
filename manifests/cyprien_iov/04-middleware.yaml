@@ -1,0 +1,12 @@
+# Traefik picks up middlewares labelled `traefik=enabled` from any namespace
+# when referenced as `<name>@file` in an IngressRoute.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: friend-basic
+  namespace: friend-cyprien-iov
+  labels:
+    traefik: enabled
+spec:
+  basicAuth:
+    secret: friend-htpasswd

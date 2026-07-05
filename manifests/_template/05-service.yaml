@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ttyd
+  namespace: friend-__NAME__
+  labels:
+    app: ttyd
+    friend: __NAME__
+spec:
+  type: ClusterIP
+  selector:
+    app: ttyd
+    friend: __NAME__
+  ports:
+    - name: ttyd
+      port: 7681
+      targetPort: 7681

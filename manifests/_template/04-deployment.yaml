@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ttyd
+  namespace: friend-__NAME__
+  labels:
+    app: ttyd
+    friend: __NAME__
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: ttyd
+      friend: __NAME__
+  template:
+    metadata:
+      labels:
+        app: ttyd
+        friend: __NAME__
+    spec:
+      containers:
+        - name: ttyd
+          image: localhost/hermes-friends/ttyd:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 7681
+          readinessProbe:
+            tcpSocket:
+              port: 7681
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 7681
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: 1
+              memory: 512Mi
+          volumeMounts:
+            - name: friends-data
+              mountPath: /opt/data
+      volumes:
+        - name: friends-data
+          persistentVolumeClaim:
+            claimName: friend-data

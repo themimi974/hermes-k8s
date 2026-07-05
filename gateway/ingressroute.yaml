@@ -1,0 +1,21 @@
+# Re-uses the original hermes-basic middleware from the POC stack
+# (defined in `auth` namespace as per the brief). Traefik label
+# selectors resolve middlewares across namespaces.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: hermes-gateway-vanity
+  namespace: auth
+spec:
+  entryPoints: [websecure]
+  routes:
+    - match: Host(`hermes.caron.fun`)
+      kind: Rule
+      middlewares:
+        - name: hermes-basic
+          namespace: auth
+      services:
+        - name: gateway
+          port: 80
+  tls:
+    certResolver: cfresolver

@@ -1,0 +1,10 @@
+# Drop-in template for add-friend.sh. The script substitutes:
+#   __NAME__       -> friend namespace suffix (e.g. "alice")
+#   __HOST__       -> full subdomain (e.g. "alice.hermes.caron.fun")
+#   __B64USERS__   -> base64 of "<username>:$<apr1-hash>$<salt>\n" (no trailing \n OK too)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: friend-__NAME__
+  labels:
+    traefik: enabled

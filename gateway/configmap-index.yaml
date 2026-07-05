@@ -1,0 +1,45 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gateway-index
+  namespace: auth
+data:
+  index.html: |
+    <!doctype html>
+    <html lang="fr">
+    <head>
+      <meta charset="utf-8">
+      <title>Hermes — POC Friends</title>
+      <style>
+        body { font-family: ui-sans-serif, system-ui, sans-serif; background:#0d1117; color:#c9d1d9; margin:2rem auto; max-width:720px; }
+        h1 { color:#58a6ff; }
+        .friend { border:1px solid #30363d; border-radius:8px; padding:1rem 1.25rem; margin-bottom:.75rem; display:flex; justify-content:space-between; align-items:center; }
+        .friend a { color:#58a6ff; text-decoration:none; font-weight:600; }
+        .creds { font-family: ui-monospace, monospace; font-size:.85rem; color:#8b949e; }
+        .pill { background:#161b22; border:1px solid #30363d; border-radius:999px; padding:.15rem .6rem; font-size:.75rem; color:#8b949e; }
+        footer { color:#6e7681; margin-top:2rem; font-size:.8rem; }
+      </style>
+    </head>
+    <body>
+      <h1>Hermes — POC friends gateway</h1>
+      <p>Each entry below is an isolated Hermes workspace. Same browser, different subdomains, different ephemeral containers.</p>
+      <div id="list">Loading…</div>
+      <footer>Test environment. No rotation, no data retention guarantees.</footer>
+      <script>
+        // Friends manifest is delivered by the nginx sidecar; if you want
+        // a friends.json in production, replace this with a fetch.
+        const FRIENDS = window.__FRIENDS__ || [];
+        const el = document.getElementById("list");
+        if (!FRIENDS.length) el.innerHTML = "<p>No friends provisioned yet.</p>";
+        else el.innerHTML = FRIENDS.map(f => `
+          <div class="friend">
+            <div>
+              <a href="https://${f.host}/">${f.host}</a>
+              <span class="pill">${f.namespace}</span>
+              <div class="creds">user: <code>${f.user}</code> &middot; pass: <code>${f.pass}</code></div>
+            </div>
+            <a href="https://${f.host}/">open &rarr;</a>
+          </div>`).join("");
+      </script>
+    </body>
+    </html>
