@@ -4,6 +4,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom'
 const API_BASE = '/api'
 
 function StatusBadge({ status }) {
+  const normalized = status ? status.charAt(0).toUpperCase() + status.slice(1) : 'Unknown'
   const colors = {
     Running: 'bg-green-500',
     Error: 'bg-red-500',
@@ -12,8 +13,8 @@ function StatusBadge({ status }) {
   }
   
   return (
-    <span className={`inline-block px-3 py-1 rounded-full text-sm font-medium text-white ${colors[status] || colors.Unknown}`}>
-      {status}
+    <span className={`inline-block px-3 py-1 rounded-full text-sm font-medium text-white ${colors[normalized] || colors.Unknown}`}>
+      {normalized}
     </span>
   )
 }
@@ -29,7 +30,7 @@ function FriendDetail() {
 
   const fetchFriend = async () => {
     try {
-      const response = await fetch(`${API_BASE}/friends/${name}`)
+      const response = await fetch(`${API_BASE}/friends/${name}`, { credentials: 'include' })
       if (!response.ok) throw new Error('Friend not found')
       const data = await response.json()
       setFriend(data)
@@ -43,10 +44,10 @@ function FriendDetail() {
 
   const fetchSnapshots = async () => {
     try {
-      const response = await fetch(`${API_BASE}/friends/${name}/snapshots`)
+      const response = await fetch(`${API_BASE}/friends/${name}/snapshots`, { credentials: 'include' })
       if (response.ok) {
         const data = await response.json()
-        setSnapshots(data.snapshots || data)
+        setSnapshots(Array.isArray(data) ? data : (data.snapshots || []))
       }
     } catch (err) {
       console.error('Failed to fetch snapshots:', err)
@@ -62,7 +63,8 @@ function FriendDetail() {
     setActionLoading(true)
     try {
       const response = await fetch(`${API_BASE}/friends/${name}/save`, {
-        method: 'POST'
+        method: 'POST',
+        credentials: 'include'
       })
       if (!response.ok) throw new Error('Failed to save')
       await fetchSnapshots()
@@ -74,14 +76,17 @@ function FriendDetail() {
     }
   }
 
-  const handleRestore = async (snapshotId) => {
+  const handleRestore = async (snapshotKey) => {
     if (!confirm('Are you sure you want to restore this snapshot?')) return
     setActionLoading(true)
     try {
-      const url = snapshotId
-        ? `${API_BASE}/friends/${name}/restore?snapshot_key=${encodeURIComponent(snapshotId)}`
+      const url = snapshotKey
+        ? `${API_BASE}/friends/${name}/restore?snapshot_key=${encodeURIComponent(snapshotKey)}`
         : `${API_BASE}/friends/${name}/restore`
-      const response = await fetch(url, { method: 'POST' })
+      const response = await fetch(url, {
+        method: 'POST',
+        credentials: 'include'
+      })
       if (!response.ok) throw new Error('Failed to restore')
       await fetchFriend()
       alert('Restored successfully!')
@@ -97,7 +102,8 @@ function FriendDetail() {
     setActionLoading(true)
     try {
       const response = await fetch(`${API_BASE}/friends/${name}`, {
-        method: 'DELETE'
+        method: 'DELETE',
+        credentials: 'include'
       })
       if (!response.ok) throw new Error('Failed to delete')
       navigate('/')
@@ -141,31 +147,31 @@ function FriendDetail() {
             <StatusBadge status={friend.status} />
           </div>
           <a 
-            href={`https://${friend.name}.hermes.community`}
+            href={`https://${friend.name}.hermes.caron.fun`}
             target="_blank"
             rel="noopener noreferrer"
             className="text-blue-400 hover:text-blue-300 underline"
           >
-            {friend.name}.hermes.community ↗
+            {friend.name}.hermes.caron.fun ↗
           </a>
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-8">
           <div className="bg-gray-700 rounded-lg p-4">
             <div className="text-gray-400 text-sm mb-1">Status</div>
-            <div className="text-xl font-semibold">{friend.status}</div>
+            <div className="text-xl font-semibold capitalize">{friend.status}</div>
           </div>
           <div className="bg-gray-700 rounded-lg p-4">
-            <div className="text-gray-400 text-sm mb-1">Uptime</div>
-            <div className="text-xl font-semibold font-mono">{friend.uptime || 'N/A'}</div>
+            <div className="text-gray-400 text-sm mb-1">Pods</div>
+            <div className="text-xl font-semibold font-mono">{friend.ready_pods}/{friend.pods}</div>
           </div>
           <div className="bg-gray-700 rounded-lg p-4">
-            <div className="text-gray-400 text-sm mb-1">CPU</div>
-            <div className="text-xl font-semibold">{friend.cpu || 'N/A'}</div>
+            <div className="text-gray-400 text-sm mb-1">PVC</div>
+            <div className="text-xl font-semibold">{friend.pvc_size}</div>
           </div>
           <div className="bg-gray-700 rounded-lg p-4">
-            <div className="text-gray-400 text-sm mb-1">Memory</div>
-            <div className="text-xl font-semibold">{friend.memory || 'N/A'}</div>
+            <div className="text-gray-400 text-sm mb-1">Namespace</div>
+            <div className="text-sm font-mono">{friend.namespace}</div>
           </div>
         </div>
 

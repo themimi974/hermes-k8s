@@ -27,6 +27,7 @@ function NewFriend() {
       const response = await fetch(`${API_BASE}/friends`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(formData)
       })
 

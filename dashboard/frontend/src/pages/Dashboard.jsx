@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom'
 const API_BASE = '/api'
 
 function StatusBadge({ status }) {
+  const normalized = status ? status.charAt(0).toUpperCase() + status.slice(1) : 'Unknown'
   const colors = {
     Running: 'bg-green-500 text-white',
     Error: 'bg-red-500 text-white',
@@ -12,8 +13,8 @@ function StatusBadge({ status }) {
   }
   
   return (
-    <span className={`px-3 py-1 rounded-full text-sm font-medium ${colors[status] || colors.Unknown}`}>
-      {status}
+    <span className={`px-3 py-1 rounded-full text-sm font-medium ${colors[normalized] || colors.Unknown}`}>
+      {normalized}
     </span>
   )
 }
@@ -30,18 +31,22 @@ function FriendCard({ friend, onSave, onRestore, onDelete }) {
       
       <div className="space-y-2 text-gray-300 mb-4">
         <div className="flex items-center">
-          <span className="text-gray-500 w-20">Uptime:</span>
-          <span className="font-mono">{friend.uptime || 'N/A'}</span>
+          <span className="text-gray-500 w-20">Pods:</span>
+          <span className="font-mono">{friend.ready_pods}/{friend.pods}</span>
+        </div>
+        <div className="flex items-center">
+          <span className="text-gray-500 w-20">PVC:</span>
+          <span className="font-mono">{friend.pvc_size} ({friend.pvc_status})</span>
         </div>
         <div className="flex items-center">
           <span className="text-gray-500 w-20">Subdomain:</span>
           <a 
-            href={`https://${friend.name}.hermes.community`}
+            href={`https://${friend.name}.hermes.caron.fun`}
             target="_blank"
             rel="noopener noreferrer"
             className="text-blue-400 hover:text-blue-300 underline"
           >
-            {friend.name}.hermes.community
+            {friend.name}.hermes.caron.fun
           </a>
         </div>
       </div>
@@ -78,10 +83,10 @@ function Dashboard() {
 
   const fetchFriends = async () => {
     try {
-      const response = await fetch(`${API_BASE}/friends`)
-      if (!response.ok) throw new Error('Failed to fetch friends')
+      const response = await fetch(`${API_BASE}/friends`, { credentials: 'include' })
+      if (!response.ok) throw new Error(`Failed to fetch friends (${response.status})`)
       const data = await response.json()
-      setFriends(data)
+      setFriends(Array.isArray(data) ? data : [])
       setError(null)
     } catch (err) {
       setError(err.message)
@@ -98,7 +103,8 @@ function Dashboard() {
     setActionLoading(name)
     try {
       const response = await fetch(`${API_BASE}/friends/${name}/save`, {
-        method: 'POST'
+        method: 'POST',
+        credentials: 'include'
       })
       if (!response.ok) throw new Error('Failed to save')
       await fetchFriends()
@@ -113,7 +119,8 @@ function Dashboard() {
     setActionLoading(name)
     try {
       const response = await fetch(`${API_BASE}/friends/${name}/restore`, {
-        method: 'POST'
+        method: 'POST',
+        credentials: 'include'
       })
       if (!response.ok) throw new Error('Failed to restore')
       await fetchFriends()
@@ -129,7 +136,8 @@ function Dashboard() {
     setActionLoading(name)
     try {
       const response = await fetch(`${API_BASE}/friends/${name}`, {
-        method: 'DELETE'
+        method: 'DELETE',
+        credentials: 'include'
       })
       if (!response.ok) throw new Error('Failed to delete')
       await fetchFriends()
