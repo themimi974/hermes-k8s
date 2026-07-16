@@ -146,8 +146,9 @@ configure_hermes() {
     cat > "$hermes_home/config.yaml" << 'YAML'
 model:
   default: qwen3.5:0.8b
-  provider: ollama
-  base_url: http://localhost:11434
+  provider: custom
+  base_url: http://localhost:11434/v1
+  api_key: ollama
   context_length: 8192
 
 agent:
