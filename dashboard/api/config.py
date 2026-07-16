@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     postgres_db: str = "dashboard"
 
     # LiteLLM
-    litellm_host: str = "litellm-gateway.litellm.svc.cluster.local"
+    litellm_host: str = "litellm.litellm.svc.cluster.local"
     litellm_port: int = 4000
     litellm_master_key: str = ""
 
