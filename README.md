@@ -1,444 +1,329 @@
 # hermes-k8s
 
-Per-user isolated Hermes Agent subdomains on a single k3s node. Each friend gets their own terminal shell behind `<friend>.yourdomain.com`, with a central gateway at `yourdomain.com`.
+Per-user isolated Hermes Agent subdomains on a single k3s node. Each friend gets their own terminal shell behind `<friend>.hermes.caron.fun`, with a central dashboard, LiteLLM gateway, and optional local LLM.
 
-## Architecture
-
-See [docs/architecture.svg](docs/architecture.svg) for the precise stack diagram with real resource names.
+## Stack
 
 ```
-Cloudflare (*.yourdomain.com → <node-ip>)
+Cloudflare (*.hermes.caron.fun → 192.168.1.174)
     │
     ▼
-Traefik (k3s IngressRouteCRDs)
-  ┌─────────┴──────────┐
-  │                    │
-yourdomain.com    <friend>.yourdomain.com
-(gateway)         (ttyd pod)
-nginx + creds     bash -l, /opt/data PVC
+Traefik (Let's Encrypt wildcard TLS)
+  ┌──────────┬───────────────┬──────────────────┐
+  │          │               │                  │
+dashboard  api            litellm          <friend>
+frontend   :8000          :4000             :7681
+(nginx)    (FastAPI)      (LiteLLM)         (ttyd)
 ```
 
-- **TLS**: Wildcard cert via Cloudflare DNS-01 challenge (automatic renewal)
+- **TLS**: Wildcard cert `*.hermes.caron.fun` via Let's Encrypt DNS-01
+- **DNS**: Cloudflare (DNS only, no proxy)
 - **Auth**: Per-friend basicAuth via Traefik CRD Middlewares
-- **Storage**: 2Gi `local-path` PVC per friend, mounted at `/opt/data`
-- **Image**: Custom `debian:trixie` + Node 20 + ttyd + Hermes Agent
+- **Storage**: 2Gi `local-path` PVC per friend
+- **LLM Gateway**: LiteLLM proxy with virtual keys per user
+- **Local LLM**: SmolLM2-135M via podman-compose on host
+
+---
+
+## Services
+
+| Service | URL | Description |
+|---------|-----|-------------|
+| Dashboard | `https://dashboard.hermes.caron.fun` | React UI for managing friends, budget groups, usage |
+| Dashboard API | `https://dashboard.hermes.caron.fun/api/` | FastAPI backend |
+| LiteLLM | `https://litellm.hermes.caron.fun` | LLM API gateway |
+| Friends | `https://<name>.hermes.caron.fun` | Individual terminal shells |
 
 ---
 
 ## Prerequisites
 
-| Requirement | Why |
-|---|---|
-| **Debian 12+ or Fedora 40+ VM** | k3s target |
-| **Cloudflare account** with a domain | DNS-01 wildcard certs |
-| **Cloudflare API Token** | Permissions: Zone > DNS > Edit (for your domain) |
-| **Node IP accessible from internet** | Port 80/443 open to Cloudflare |
-| **Root or sudo access** | k3s install, package management |
-| **podman or docker** | Build the ttyd image |
+- Fedora 44 (or similar) with k3s
+- Cloudflare account + domain
+- Cloudflare API Token (Zone > DNS > Edit)
+- podman (for building images)
+- Sudo access
 
 ---
 
-## Step-by-Step Deployment
+## Quick Start
 
-### Step 1: Clone the repo
-
-```bash
-cd ~
-git clone git@github.com:themimi974/hermes-k8s.git
-cd hermes-k8s
-```
-
-### Step 2: Install k3s
+### 1. Install k3s
 
 ```bash
-# Install k3s (Traefik is enabled by default)
 curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--write-kubeconfig-mode 0640" sh -
-
-# Make kubectl accessible without sudo (add your user to the k3s config group)
 sudo chown root:$(id -gn) /etc/rancher/k3s/k3s.yaml
-# Or for a user not in the k3s group:
-# sudo chmod 644 /etc/rancher/k3s/k3s.yaml
-
-# Wait for node to be ready
 kubectl get nodes --watch
-# Press Ctrl+C when STATUS shows "Ready"
-
-# Verify Traefik is running
-kubectl -n kube-system get pods -l app.kubernetes.io/name=traefik
 ```
 
-### Step 3: Create the Cloudflare API token secret
+### 2. Build and import images
 
 ```bash
-# Replace with your actual Cloudflare API token
-# The token needs: Zone > DNS > Edit permission for your domain
-echo -n "YOUR_CLOUDFLARE_API_TOKEN" | kubectl create secret generic cloudflare-api-token \
-  --from-literal=CF_DNS_API_TOKEN=/dev/stdin \
-  --dry-run=client -o yaml | kubectl apply -f -
+# ttyd image (for friends)
+podman build -t localhost/hermes-friends/ttyd:latest .
+podman save localhost/hermes-friends/ttyd:latest | sudo k3s ctr images import -
+
+# Dashboard API
+cd dashboard/api
+podman build -t localhost/hermes-dashboard-api:latest .
+podman save localhost/hermes-dashboard-api:latest | sudo k3s ctr images import -
+
+# Dashboard Frontend
+cd dashboard/frontend
+podman build -t localhost/hermes-dashboard-frontend:latest .
+podman save localhost/hermes-dashboard-frontend:latest | sudo k3s ctr images import -
 ```
 
-### Step 4: Configure Traefik with Cloudflare DNS-01
+### 3. Deploy
 
 ```bash
-# Replace YOUR_EMAIL with your Cloudflare account email
-cat <<'EOF' | kubectl apply -f -
-apiVersion: helm.cattle.io/v1
-kind: HelmChart
-metadata:
-  name: traefik
-  namespace: kube-system
-spec:
-  chart: traefik
-  repo: https://traefik.github.io/charts
-  version: 40.1.3
-  valuesContent: |-
-    providers:
-      kubernetesCRD:
-        enabled: true
-        allowEmptyServices: true
-      kubernetesIngress:
-        enabled: true
-        allowEmptyServices: true
-    entryPoints:
-      web:
-        port: 8000
-      websecure:
-        port: 8443
-        http:
-          tls:
-            certResolver: cfresolver
-    certificatesResolvers:
-      cfresolver:
-        acme:
-          email: YOUR_EMAIL
-          dnsChallenge:
-            provider: cloudflare
-            envFromSecret: cloudflare-api-token
-          storage: /data/acme.json
-    logs:
-      access:
-        enabled: true
-        fields:
-          headers:
-            names:
-              X-Forwarded-Proto: keep
-              X-Forwarded-Host: keep
-              X-Forwarded-For: keep
-EOF
-
-# Wait for Traefik to pick up the new config
-kubectl -n kube-system rollout status deployment/traefik --timeout=120s
-```
-
-### Step 5: Configure DNS in Cloudflare
-
-In your Cloudflare dashboard, add these DNS records:
-
-| Type | Name | Content | Proxy |
-|---|---|---|---|
-| A | `@` | `<node-ip>` | DNS only (gray cloud) |
-| A | `*` | `<node-ip>` | DNS only (gray cloud) |
-
-> **Important**: Use "DNS only" (gray cloud), not "Proxied" (orange cloud).
-> Traefik handles TLS termination; Cloudflare should not proxy the traffic.
-
-### Step 6: Build and import the ttyd image
-
-```bash
-# Install podman if not present
-# Debian: sudo apt install podman
-# Fedora: sudo dnf install podman
-
-# Build the image (takes ~2-3 minutes on first build)
-podman build -t hermes-friends/ttyd:latest .
-
-# Export and import into k3s containerd (needs sudo for the k3s socket)
-podman save hermes-friends/ttyd:latest | sudo k3s ctr images import -
-
-# Verify
-sudo k3s ctr images list | grep ttyd
-# Should show: localhost/hermes-friends/ttyd:latest
-```
-
-### Step 7: Create the auth namespace + gateway htpasswd
-
-```bash
-kubectl create namespace auth
-
-# Create the gateway htpasswd secret (replace admin:Test1234 with your own)
-# Generate the hash: openssl passwd -apr1 -salt mysalt yourpassword
-GW_HASH=$(openssl passwd -apr1 -salt gateway AdminPass123)
-echo -n "admin:$GW_HASH" | kubectl create secret generic hermes-htpasswd \
-  --from-literal=users=/dev/stdin \
-  --namespace=auth \
-  --dry-run=client -o yaml | kubectl apply -f -
-```
-
-### Step 8: Apply the gateway
-
-```bash
-# Replace hermes.caron.fun with your actual domain
-sed -i 's/hermes\.caron\.fun/YOUR_DOMAIN/g' gateway/ingressroute.yaml
-
+kubectl apply -f dashboard/manifests/
 kubectl apply -f gateway/
-
-# Wait for nginx to start
-kubectl -n auth rollout status deployment/gateway --timeout=60s
 ```
 
-### Step 9: Add your first friend
+### 4. Start local LLM (optional)
 
 ```bash
-bash scripts/add-friend.sh alice alice 'your-password'
+cd ~/llama-compose
+podman-compose up -d
 ```
 
-This creates everything in one go:
-- Namespace `friend-alice`
-- PersistentVolumeClaim (2Gi)
-- htpasswd Secret
-- Traefik Middleware (basicAuth)
-- Deployment (ttyd pod)
-- Service (ClusterIP :7681)
-- IngressRoute (`alice.yourdomain.com` → ttyd:7681 + TLS)
-- Updates gateway registry
-
-### Step 10: Update manifests for your domain
-
-Replace the domain in the cyprien_iov manifests (or any friend manifests):
+### 5. Configure LiteLLM
 
 ```bash
-sed -i 's/hermes\.caron\.fun/YOUR_DOMAIN/g' manifests/*/07-ingressroute.yaml
-sed -i 's/hermes\.caron\.fun/YOUR_DOMAIN/g' manifests/_template/06-ingressroute.yaml
-sed -i 's/hermes\.caron\.fun/YOUR_DOMAIN/g' gateway/ingressroute.yaml
-```
+# Update the ConfigMap with your model config
+kubectl create configmap litellm-config -n litellm \
+  --from-file=config.yaml=litellm-config.yaml \
+  -o yaml --dry-run=client | kubectl replace -f -
 
-### Step 11: Verify everything works
-
-```bash
-# Test the friend endpoint (expect 401 first)
-curl -sk -o /dev/null -w "%{http_code}" https://alice.YOUR_DOMAIN/
-# 401
-
-# Test with credentials (expect 200 + ttyd HTML)
-curl -sk -u 'alice:your-password' https://alice.YOUR_DOMAIN/
-# 200 (ttyd HTML)
-
-# Test the gateway (expect 401)
-curl -sk -o /dev/null -w "%{http_code}" https://YOUR_DOMAIN/
-# 401
-
-# Test the gateway with credentials (expect 200)
-curl -sk -u 'admin:AdminPass123' https://YOUR_DOMAIN/
-# 200 (landing page)
+# Restart LiteLLM
+kubectl rollout restart deployment litellm -n litellm
 ```
 
 ---
 
-## Adding More Friends
+## Dashboard
 
-```bash
-# Add a friend
-bash scripts/add-friend.sh <name> <username> <password>
+Access at `https://dashboard.hermes.caron.fun`. Features:
 
-# Example
-bash scripts/add-friend.sh bob bob 'hunter2'
-
-# Update gateway to show the new friend
-bash scripts/gateway-sync.sh
-```
-
-Each friend gets:
-- Their own subdomain: `<name>.yourdomain.com`
-- Their own Kubernetes namespace: `friend-<name>`
-- Their own persistent storage: 2Gi PVC at `/opt/data`
-- Their own Traefik basicAuth middleware
-
----
-
-## Removing a Friend
-
-```bash
-bash scripts/remove-friend.sh bob
-```
-
-This deletes:
-- Namespace `friend-bob` (cascading: all resources inside)
-- Removes from gateway registry
-- Restarts gateway
-
----
-
-## Persistence Test
-
-Files in `/opt/data` survive pod restarts:
-
-```bash
-# Write a test file
-kubectl -n friend-alice exec deployment/ttyd -- sh -c 'echo "test" > /opt/data/.test'
-
-# Kill the pod
-kubectl -n friend-alice delete pod -l app=ttyd
-
-# After respawn (~10s), verify
-kubectl -n friend-alice exec deployment/ttyd -- cat /opt/data/.test
-# Should output: test
-```
-
----
-
-## Dashboard (Web Management UI)
-
-A web dashboard for managing friends, with state save/restore capabilities.
-
-### Components
-
-| Component | Image | Port | Description |
-|---|---|---|---|
-| dashboard-api | `hermes-friends/dashboard-api:latest` | 8000 | FastAPI backend |
-| dashboard-frontend | `hermes-friends/dashboard-frontend:latest` | 80 | React + Vite + TailwindCSS |
-| postgresql | `postgres:16-alpine` | 5432 | PostgreSQL database |
-| minio | `minio/minio` | 9000/9001 | Object storage for state snapshots |
+- **Friends**: Create, delete, view status of friend pods
+- **Budget Groups**: Define model access, rate limits, budgets
+- **Usage**: Track API calls, tokens, costs by model and friend
+- **Virtual Keys**: Auto-provisioned per friend via LiteLLM
 
 ### API Endpoints
 
 ```
-GET    /health                              → health check
-GET    /api/friends                         → list all friends
+GET    /api/friends                         → list friends
 GET    /api/friends/{name}                  → friend details
-POST   /api/friends                         → create friend {name, username, password}
-DELETE /api/friends/{name}                  → delete friend (cascading)
-GET    /api/friends/{name}/state            → list state snapshots
-POST   /api/friends/{name}/state/save       → save state to MinIO
-POST   /api/friends/{name}/state/restore    → restore state from snapshot
+POST   /api/friends                         → create friend
+DELETE /api/friends/{name}                  → delete friend
+POST   /api/friends/{name}/assign-group     → assign budget group
+GET    /api/budget-groups                   → list budget groups
+POST   /api/budget-groups                   → create group
+PUT    /api/budget-groups/{id}              → update group
+DELETE /api/budget-groups/{id}              → delete group
+GET    /api/usage                           → usage stats
+GET    /api/usage/models                    → list models from LiteLLM
 ```
-
-### State Save/Restore
-
-State save backs up Hermes-relevant files (`/root/.hermes`, `/root/.bashrc`, `/root/.profile`) to MinIO as compressed tarballs. State restore downloads the snapshot and pipes it into the running ttyd pod.
-
-```bash
-# Save state
-curl -X POST http://dashboard.hermes.caron.fun/api/friends/alice/state/save
-
-# List snapshots
-curl http://dashboard.hermes.caron.fun/api/friends/alice/state
-
-# Restore state (latest snapshot)
-curl -X POST http://dashboard.hermes.caron.fun/api/friends/alice/state/restore
-
-# Restore specific snapshot
-curl -X POST "http://dashboard.hermes.caron.fun/api/friends/alice/state/restore?snapshot_key=alice/backup-123456.tar.gz"
-```
-
-### Deployment
-
-```bash
-# Apply all manifests
-kubectl apply -f dashboard/manifests/
-
-# Build and import API image
-cd dashboard/api
-podman build -t localhost/hermes-friends/dashboard-api:latest .
-podman save localhost/hermes-friends/dashboard-api:latest | sudo k3s ctr images import -
-
-# Build and import frontend image
-cd dashboard/frontend
-podman build -t localhost/hermes-friends/dashboard-frontend:latest .
-podman save localhost/hermes-friends/dashboard-frontend:latest | sudo k3s ctr images import -
-```
-
-### Dashboard Access
-
-The dashboard is available at `dashboard.hermes.caron.fun` behind basic auth.
 
 ---
 
-## Troubleshooting
+## LiteLLM Gateway
 
-### Traefik shows "middleware does not exist"
+LLM API gateway with per-user virtual keys and budget controls.
 
-Ensure your IngressRoute references middlewares with `name` + `namespace`:
+### Configured Models
+
+| Model | Provider | Status |
+|-------|----------|--------|
+| smolm2 | Local (llama.cpp) | ✅ Healthy |
+| gpt-4o | OpenAI | ⚠️ Needs API key |
+| gpt-4o-mini | OpenAI | ⚠️ Needs API key |
+| gpt-3.5-turbo | OpenAI | ⚠️ Needs API key |
+
+### Adding Models
+
+Edit the LiteLLM ConfigMap. LiteLLM supports multiple providers:
 
 ```yaml
-# Correct (CRD middleware)
-middlewares:
-  - name: friend-basic
-    namespace: friend-alice
+model_list:
+  # Local (llama.cpp)
+  - model_name: smolm2
+    litellm_params:
+      model: openai/smollm2
+      api_base: http://192.168.1.174:8080/v1
+      api_key: none
 
-# Wrong (file provider, won't work)
-middlewares:
-  - name: friend-basic@file
+  # OpenAI
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+
+  # Anthropic
+  - model_name: claude-sonnet
+    litellm_params:
+      model: anthropic/claude-sonnet-4-20250514
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # Ollama
+  - model_name: llama3
+    litellm_params:
+      model: ollama/llama3
+      api_base: http://host:11434
 ```
 
-### Pod stuck in ImagePullBackOff
+### Virtual Key Lifecycle
 
-The image is local-only. Ensure:
-1. Image was imported: `sudo k3s ctr images list | grep ttyd`
-2. Deployment uses `localhost/` prefix and `imagePullPolicy: Never`
+Keys are auto-managed by the dashboard:
+1. **Create friend** → LiteLLM key created, stored in DB
+2. **Assign group** → Key updated with group's models/limits
+3. **Delete friend** → Key deleted from LiteLLM + DB
 
-### TLS cert not issuing
+---
 
-Check Traefik logs:
+## Local LLM (SmolLM2)
+
+Runs on the host via podman-compose, accessible from k3s pods.
+
 ```bash
-kubectl -n kube-system logs deployment/traefik --tail=50 | grep -i acme
+# Start
+cd ~/llama-compose && podman-compose up -d
+
+# Stop
+podman-compose down
+
+# Check status
+curl http://localhost:8080/health
 ```
 
-Common issues:
-- Cloudflare API token doesn't have DNS:Edit permission
-- DNS record not set to "DNS only" (gray cloud)
-- Email in HelmChart doesn't match Cloudflare account
+| Item | Value |
+|------|-------|
+| Model | SmolLM2-135M-Instruct Q4_K_M (101MB) |
+| Server | llama.cpp on host:8080 |
+| Compose file | `/home/admin/llama-compose/docker-compose.yml` |
+| Model file | `/home/admin/models/SmolLM2-135M-Instruct-Q4_K_M.gguf` |
 
-### Namespace creation fails with "invalid"
+---
 
-Kubernetes namespace names must be lowercase alphanumeric + hyphens only. No underscores.
+## Adding Friends
 
-### PVC won't mount
+### Via Dashboard
 
-Check PVC status:
+Go to `https://dashboard.hermes.caron.fun` → Friends → Add Friend
+
+### Via API
+
 ```bash
-kubectl -n friend-alice get pvc friend-data
+curl -X POST https://dashboard.hermes.caron.fun/api/friends \
+  -H "Content-Type: application/json" \
+  -d '{"name": "alice", "username": "alice", "password": "your-password"}'
+
+# Assign budget group
+curl -X POST "https://dashboard.hermes.caron.fun/api/friends/alice/assign-group?group_id=1"
 ```
 
-If stuck in Pending, ensure `local-path` StorageClass exists:
-```bash
-kubectl get storageclass
-```
+### What Gets Created
+
+- Kubernetes namespace `friend-alice`
+- PersistentVolumeClaim (2Gi)
+- htpasswd Secret + Traefik Middleware
+- ttyd Deployment + Service
+- IngressRoute (`alice.hermes.caron.fun`)
+- LiteLLM virtual key
+
+---
+
+## Budget Groups
+
+Pre-configured groups with model access and rate limits:
+
+| Group | Models | Budget | TPM | RPM |
+|-------|--------|--------|-----|-----|
+| basic | smolm2 | $10 | 100K | 1K |
+| standard | smolm2 | $50 | 100K | 1K |
+| premium | smolm2 | $200 | 100K | 1K |
+| unlimited | smolm2 | $999K | 100K | 1K |
 
 ---
 
 ## File Layout
 
 ```
-hermes-k8s/
-├── README.md                    ← this file
-├── REPORT.md                    ← project report
-├── Dockerfile                   ← ttyd image build
-├── .gitignore                   ← excludes secrets
-├── manifests/
-│   ├── cyprien_iov/             ← first-friend example (8 YAMLs)
-│   └── _template/               ← generic template for add-friend.sh
-├── dashboard/                   ← web management UI
-│   ├── manifests/               ← k8s manifests (20 YAMLs)
-│   ├── api/                     ← FastAPI backend
-│   └── frontend/                ← React + Vite frontend
-├── gateway/                     ← yourdomain.com landing page
-│   ├── configmap-index.yaml
-│   ├── deployment.yaml
-│   ├── service.yaml
-│   ├── ingressroute.yaml
-│   └── registry.yaml
+hermes-friends/
+├── README.md
+├── Dockerfile                       ← ttyd image
+├── .gitignore
+├── docs/                            ← reports, plans (gitignored)
+├── gateway/                         ← hermes.caron.fun landing page
+├── dashboard/
+│   ├── manifests/                   ← k8s manifests
+│   ├── api/                         ← FastAPI backend
+│   │   ├── main.py
+│   │   ├── config.py
+│   │   ├── database.py
+│   │   ├── models.py
+│   │   ├── routers/
+│   │   │   ├── friends.py
+│   │   │   ├── budget_groups.py
+│   │   │   ├── usage.py
+│   │   │   └── health.py
+│   │   └── services/
+│   │       ├── litellm_client.py    ← LiteLLM API client
+│   │       ├── friend_manager.py    ← k8s resource management
+│   │       └── k8s.py               ← k8s API wrapper
+│   └── frontend/                    ← React + Vite + Tailwind
+│       └── src/pages/
+│           ├── Dashboard.jsx
+│           ├── BudgetGroups.jsx
+│           ├── Usage.jsx
+│           └── FriendDetail.jsx
+├── manifests/                       ← friend templates
 └── scripts/
-    ├── add-friend.sh            ← idempotent full provision
-    ├── remove-friend.sh         ← teardown
-    ├── gateway-sync.sh          ← registry → nginx
-    └── import-image.sh          ← podman → k3s containerd
+    ├── add-friend.sh
+    └── remove-friend.sh
 ```
 
 ---
 
-## Security Notes
+## Troubleshooting
 
-- **No credentials in repo**: htpasswd secrets are sanitized before commit
-- **Test environment**: credential rotation not implemented (by design)
-- **TLS everywhere**: Traefik terminates TLS, traffic inside cluster is unencrypted (localhost only)
-- **Cloudflare token**: stored in Kubernetes Secret, not in repo
+### Pod stuck in ErrImageNeverPull
+
+Image not in k3s containerd. Import it:
+```bash
+podman save localhost/hermes-friends/ttyd:latest -o /tmp/img.tar
+sudo k3s ctr images import /tmp/img.tar
+# Then delete the stuck pod to force recreate
+kubectl delete pod <pod-name> -n friend-<name>
+```
+
+### TLS cert not issuing
+
+```bash
+kubectl -n kube-system logs deployment/traefik --tail=50 | grep -i acme
+```
+
+Fix: Patch Traefik with external DNS (k3s CoreDNS doesn't return SOA):
+```bash
+kubectl patch deployment traefik -n kube-system --type json -p '[
+  {"op": "replace", "path": "/spec/template/spec/dnsPolicy", "value": "None"},
+  {"op": "add", "path": "/spec/template/spec/dnsConfig/nameservers", "value": ["1.1.1.1", "8.8.8.8"]}
+]'
+```
+
+### LiteLLM models unhealthy
+
+Check API key:
+```bash
+kubectl get secret litellm-config -n litellm -o jsonpath='{.data.OPENAI_API_KEY}' | base64 -d
+```
+
+### Disk full
+
+```bash
+podman system prune -af
+sudo k3s ctr images prune --all  # CAUTION: removes all images
+kubectl get pods --all-namespaces -o json | jq '.items[] | select(.status.containerStatuses[]?.restartCount > 5) | .metadata.name'
+```
