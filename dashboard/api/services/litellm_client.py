@@ -68,14 +68,18 @@ async def create_virtual_key(
 
 
 async def delete_virtual_key(token: str) -> bool:
-    """Delete a LiteLLM virtual key by token."""
+    """Delete a LiteLLM virtual key by token hash.
+
+    LiteLLM /key/delete expects {"keys": [<hash>]} not {"key": <token>}.
+    """
     if not token:
         return False
 
+    key_hash = _hash_key(token)
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.post(
             f"{LITELLM_BASE}/key/delete",
-            json={"key": token},
+            json={"keys": [key_hash]},
             headers=HEADERS,
         )
         if resp.status_code == 200:
