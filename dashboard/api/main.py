@@ -8,8 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from database import init_db
-from routers import health, friends, state
-from services.minio_client import ensure_bucket
+from routers import health, friends, budget_groups, usage
 
 logging.basicConfig(
     level=logging.INFO,
@@ -24,19 +23,14 @@ async def lifespan(app: FastAPI):
     logger.info("Starting Hermes Dashboard API...")
     init_db()
     logger.info("Database tables initialized")
-    try:
-        ensure_bucket()
-        logger.info("MinIO bucket ready")
-    except Exception as e:
-        logger.warning(f"MinIO bucket check failed (non-fatal): {e}")
     yield
     logger.info("Shutting down Hermes Dashboard API...")
 
 
 app = FastAPI(
     title="Hermes Dashboard API",
-    description="Manage friend namespaces, deployments, and state on hermes-k8s",
-    version="1.0.0",
+    description="Manage friend namespaces, budget groups, and usage on hermes-k8s",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
@@ -52,13 +46,14 @@ app.add_middleware(
 # Register routers
 app.include_router(health.router)
 app.include_router(friends.router)
-app.include_router(state.router)
+app.include_router(budget_groups.router)
+app.include_router(usage.router)
 
 
 @app.get("/")
 async def root():
     return {
         "service": "hermes-dashboard-api",
-        "version": "1.0.0",
+        "version": "2.0.0",
         "docs": "/docs",
     }

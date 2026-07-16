@@ -5,8 +5,7 @@ from sqlalchemy.orm import sessionmaker, DeclarativeBase
 from config import settings
 
 DATABASE_URL = (
-    f"postgresql://{settings.postgres_user}:{settings.postgres_password}"
-    f"@{settings.postgres_host}:{settings.postgres_port}/{settings.postgres_db}"
+    f"postgresql://{settings.postgres_user}:{settings.postgres_password}@{settings.postgres_host}:{settings.postgres_port}/{settings.postgres_db}"
 )
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
@@ -26,5 +25,6 @@ def get_db():
 
 
 def init_db():
-    """Create all tables."""
+    """Create all tables — import models so they register with Base."""
+    import models  # noqa: F401 — triggers ORM registration
     Base.metadata.create_all(bind=engine)

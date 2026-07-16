@@ -4,18 +4,16 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     # PostgreSQL
-    postgres_host: str = "postgresql"
+    postgres_host: str = "postgresql.dashboard.svc.cluster.local"
     postgres_port: int = 5432
-    postgres_user: str = "dashboard-admin"
-    postgres_password: str = "dash-pass-2026"
-    postgres_db: str = "hermes_dashboard"
+    postgres_user: str = "hermes"
+    postgres_password: str = "hermes_db_pass_2026"
+    postgres_db: str = "dashboard"
 
-    # MinIO
-    minio_endpoint: str = "minio:9000"
-    minio_access_key: str = "dashboard-admin"
-    minio_secret_key: str = "dash-pass-2026"
-    minio_bucket: str = "hermes-states"
-    minio_secure: bool = False
+    # LiteLLM
+    litellm_host: str = "litellm-gateway.litellm.svc.cluster.local"
+    litellm_port: int = 4000
+    litellm_master_key: str = ""
 
     # Kubernetes
     k8s_incluster: bool = True
@@ -33,7 +31,8 @@ class Settings(BaseSettings):
     @property
     def postgres_url(self) -> str:
         return (
-            f"postgresql://{self.postgres_user}:***@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+            f"postgresql://{self.postgres_user}:{self.postgres_password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
 
     class Config:
