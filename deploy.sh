@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # hermes-k8s deploy script
-# Detects OS, installs prerequisites, deploys the full stack
+# Run via: curl -fsSL <url>/deploy.sh | sudo bash
+# Or: sudo bash deploy.sh (from inside the repo)
 set -euo pipefail
 
 RED='\033[0;31m'
@@ -13,6 +14,9 @@ info()  { echo -e "${CYAN}[INFO]${NC} $*"; }
 ok()    { echo -e "${GREEN}[OK]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 fail()  { echo -e "${RED}[FAIL]${NC} $*"; exit 1; }
+
+REPO_URL="https://github.com/themimi974/hermes-k8s.git"
+INSTALL_DIR="/opt/hermes-k8s"
 
 # ── OS Detection ──────────────────────────────────────────────
 detect_os() {
@@ -75,7 +79,7 @@ check_compose() {
     if docker compose version &>/dev/null; then
         ok "Docker Compose: $(docker compose version --short)"
     else
-        fail "Docker Compose not found — install Docker first"
+        fail "Docker Compose not found"
     fi
 }
 
@@ -97,19 +101,23 @@ install_git() {
 # ── Ollama ────────────────────────────────────────────────────
 install_ollama() {
     if command -v ollama &>/dev/null; then
-        ok "Ollama already installed: $(ollama --version)"
+        ok "Ollama already installed"
         return
     fi
     info "Installing Ollama..."
     curl -fsSL https://ollama.com/install.sh | sh
     systemctl enable --now ollama
     sleep 3
-    ok "Ollama installed: $(ollama --version)"
+    ok "Ollama installed"
 }
 
 pull_model() {
     local model="${1:-qwen3.5:0.8b}"
-    info "Pulling model: $model"
+    if ollama list 2>/dev/null | grep -q "$model"; then
+        ok "Model already pulled: $model"
+        return
+    fi
+    info "Pulling model: $model (this may take a few minutes)..."
     ollama pull "$model"
     ok "Model ready: $model"
 }
@@ -128,6 +136,11 @@ install_hermes() {
 configure_hermes() {
     local hermes_home="${HOME}/.hermes"
     mkdir -p "$hermes_home"
+
+    if [ -f "$hermes_home/config.yaml" ]; then
+        ok "Hermes config already exists"
+        return
+    fi
 
     info "Configuring Hermes Agent for Ollama/Qwen..."
     cat > "$hermes_home/config.yaml" << 'YAML'
@@ -155,18 +168,30 @@ YAML
     ok "Hermes configured for Ollama/Qwen"
 }
 
+# ── Clone Repo ────────────────────────────────────────────────
+clone_repo() {
+    if [ -d "$INSTALL_DIR/.git" ]; then
+        ok "Repo already cloned at $INSTALL_DIR"
+        cd "$INSTALL_DIR"
+        git pull --ff-only 2>/dev/null || true
+        return
+    fi
+    info "Cloning hermes-k8s..."
+    git clone "$REPO_URL" "$INSTALL_DIR"
+    cd "$INSTALL_DIR"
+    ok "Repo cloned to $INSTALL_DIR"
+}
+
 # ── Skills ────────────────────────────────────────────────────
 install_deploy_skill() {
     local skill_dir="${HOME}/.hermes/skills/deploy"
-    local repo_dir
-    repo_dir="$(cd "$(dirname "$0")/.." && pwd)"
 
-    if [ -d "$repo_dir/skills/deploy" ]; then
+    if [ -d "$INSTALL_DIR/skills/deploy" ]; then
         mkdir -p "$skill_dir"
-        cp -r "$repo_dir/skills/deploy/"* "$skill_dir/"
+        cp -r "$INSTALL_DIR/skills/deploy/"* "$skill_dir/"
         ok "Deployment skill installed to $skill_dir"
     else
-        warn "skills/deploy not found in repo — skipping"
+        warn "skills/deploy not found — skipping"
     fi
 }
 
@@ -185,19 +210,20 @@ install_k3s() {
 
 # ── Build Images ──────────────────────────────────────────────
 build_images() {
-    local repo_dir
-    repo_dir="$(cd "$(dirname "$0")/.." && pwd)"
+    if [ ! -f "$INSTALL_DIR/Dockerfile" ]; then
+        fail "Dockerfile not found at $INSTALL_DIR — clone failed?"
+    fi
 
     info "Building ttyd image..."
-    docker build -t localhost/hermes-friends/ttyd:latest "$repo_dir"
+    docker build -t localhost/hermes-friends/ttyd:latest "$INSTALL_DIR"
     docker save localhost/hermes-friends/ttyd:latest | k3s ctr images import -
 
     info "Building dashboard-api image..."
-    docker build -t localhost/hermes-dashboard-api:latest "$repo_dir/dashboard/api"
+    docker build -t localhost/hermes-dashboard-api:latest "$INSTALL_DIR/dashboard/api"
     docker save localhost/hermes-dashboard-api:latest | k3s ctr images import -
 
     info "Building dashboard-frontend image..."
-    docker build -t localhost/hermes-dashboard-frontend:latest "$repo_dir/dashboard/frontend"
+    docker build -t localhost/hermes-dashboard-frontend:latest "$INSTALL_DIR/dashboard/frontend"
     docker save localhost/hermes-dashboard-frontend:latest | k3s ctr images import -
 
     ok "All images built and imported"
@@ -224,6 +250,7 @@ main() {
     pull_model "qwen3.5:0.8b"
     install_hermes
     configure_hermes
+    clone_repo
     install_k3s
     build_images
     install_deploy_skill
@@ -235,6 +262,8 @@ main() {
     echo "  1. Run 'hermes' to start the agent"
     echo "  2. Tell it: 'deploy hermes-k8s'"
     echo "  3. It will guide you through domain + credentials setup"
+    echo ""
+    echo -e "${CYAN}Repo location:${NC} $INSTALL_DIR"
     echo ""
 }
 
