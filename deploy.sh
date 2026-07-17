@@ -215,47 +215,10 @@ ENV
         ok "Hermes configured for Ollama/Qwen (local model)"
 
     else
-        info "Configuring Hermes Agent for cloud provider..."
-
-        cat > "$hermes_home/config.yaml" << 'YAML'
-# Cloud provider — edit this file to set your API key and model
-# Common providers: openrouter, anthropic, openai, google
-#
-# Example OpenRouter:
-#   provider: openrouter
-#   default: anthropic/claude-sonnet-4
-#   api_key: sk-or-...
-#
-# Example Anthropic:
-#   provider: anthropic
-#   default: claude-sonnet-4
-#   api_key: sk-ant-...
-
-model:
-  default: openrouter/anthropic/claude-sonnet-4
-  provider: openrouter
-  api_key: ""           # <-- paste your API key here
-  context_length: 16384
-
-agent:
-  max_turns: 90
-
-terminal:
-  backend: local
-  timeout: 300
-
-compression:
-  enabled: true
-
-memory:
-  memory_enabled: true
-  user_profile_enabled: true
-YAML
-
-        ok "Hermes configured for cloud provider"
+        info "Skipping Ollama — you'll configure Hermes later"
         echo ""
-        warn "IMPORTANT: Edit $hermes_home/config.yaml to add your API key!"
-        warn "Or run: hermes setup"
+        echo -e "  Run ${GREEN}hermes setup${NC} to configure your provider and API key"
+        echo -e "  Then ${GREEN}hermes model${NC} to select your model"
         echo ""
     fi
 }
@@ -364,9 +327,6 @@ main() {
     echo "  2. Tell it: 'deploy hermes-k8s'"
     echo "  3. It will guide you through domain + credentials setup"
     echo ""
-    if [ "$USE_LOCAL_MODEL" = "no" ]; then
-        warn "Don't forget to set your API key in $REAL_HOME/.hermes/config.yaml"
-    fi
     echo -e "${CYAN}Repo location:${NC} $INSTALL_DIR"
     echo ""
 }
