@@ -56,8 +56,8 @@ check_disk() {
     local avail_kb
     avail_kb=$(df / --output=avail | tail -1 | tr -d ' ')
     local avail_gb=$((avail_kb / 1048576))
-    if [ "$avail_gb" -lt 15 ]; then
-        fail "Need ≥15GB disk, have ${avail_gb}GB"
+    if [ "$avail_gb" -lt 10 ]; then
+        fail "Need ≥10GB disk, have ${avail_gb}GB"
     fi
     ok "Disk: ${avail_gb}GB available"
 }
