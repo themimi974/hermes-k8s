@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # hermes-k8s deploy script
-# Run via: curl -fsSL <url>/deploy.sh | sudo bash
+# Run via: curl -fsSL https://raw.githubusercontent.com/themimi974/hermes-k8s/main/deploy.sh | sudo bash
 # Or: sudo bash deploy.sh (from inside the repo)
 set -euo pipefail
 
@@ -17,6 +17,7 @@ fail()  { echo -e "${RED}[FAIL]${NC} $*"; exit 1; }
 
 REPO_URL="https://github.com/themimi974/hermes-k8s.git"
 INSTALL_DIR="/opt/hermes-k8s"
+USE_LOCAL_MODEL=""
 
 # ── OS Detection ──────────────────────────────────────────────
 detect_os() {
@@ -35,6 +36,13 @@ detect_os() {
         fail "Cannot detect OS — /etc/os-release not found"
     fi
     info "Detected: $PRETTY_NAME (family: $OS_FAMILY)"
+}
+
+# ── Detect real user (not root) ───────────────────────────────
+detect_real_user() {
+    REAL_USER="${SUDO_USER:-$USER}"
+    REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
+    info "Running as root, configuring for user: $REAL_USER ($REAL_HOME)"
 }
 
 # ── Checks ───────────────────────────────────────────────────
@@ -61,6 +69,27 @@ check_ram() {
         fail "Need ≥4GB RAM, have ${ram_mb}MB"
     fi
     ok "RAM: ${ram_mb}MB"
+}
+
+# ── Interactive: Local Model? ─────────────────────────────────
+ask_local_model() {
+    echo ""
+    echo -e "${CYAN}╔══════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║  Would you like to use a local model (Ollama + Qwen)?  ║${NC}"
+    echo -e "${CYAN}╚══════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo "  ${GREEN}Yes${NC} — Install Ollama + pull qwen3.5:0.8b (runs on your machine)"
+    echo "  ${YELLOW}No${NC}  — Use a cloud provider (OpenRouter, Anthropic, etc.)"
+    echo ""
+    while true; do
+        read -rp "$(echo -e "${CYAN}Use local model? [Y/n]: ${NC}")" answer
+        case "${answer,,}" in
+            y|yes|"") USE_LOCAL_MODEL="yes"; break ;;
+            n|no)     USE_LOCAL_MODEL="no";  break ;;
+            *) echo "  Please answer y or n" ;;
+        esac
+    done
+    echo ""
 }
 
 # ── Docker ────────────────────────────────────────────────────
@@ -122,6 +151,14 @@ pull_model() {
     ok "Model ready: $model"
 }
 
+check_ollama() {
+    if curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
+        ok "Ollama is up on :11434"
+    else
+        warn "Ollama not responding on :11434 — you may need to run: ollama serve"
+    fi
+}
+
 # ── Hermes Agent ──────────────────────────────────────────────
 install_hermes() {
     if command -v hermes &>/dev/null; then
@@ -134,16 +171,18 @@ install_hermes() {
 }
 
 configure_hermes() {
-    local hermes_home="${HOME}/.hermes"
+    local hermes_home="$REAL_HOME/.hermes"
     mkdir -p "$hermes_home"
 
     if [ -f "$hermes_home/config.yaml" ]; then
-        ok "Hermes config already exists"
-        return
+        info "Hermes config exists — backing up before overwrite"
+        cp "$hermes_home/config.yaml" "$hermes_home/config.yaml.bak.$(date +%s)"
     fi
 
-    info "Configuring Hermes Agent for Ollama/Qwen..."
-    cat > "$hermes_home/config.yaml" << 'YAML'
+    if [ "$USE_LOCAL_MODEL" = "yes" ]; then
+        info "Configuring Hermes Agent for Ollama/Qwen..."
+
+        cat > "$hermes_home/config.yaml" << 'YAML'
 model:
   default: qwen3.5:0.8b
   provider: custom
@@ -166,7 +205,59 @@ memory:
   user_profile_enabled: true
 YAML
 
-    ok "Hermes configured for Ollama/Qwen"
+        # Also write .env for env-var-based setups
+        cat > "$hermes_home/.env" << 'ENV'
+OPENAI_API_BASE=http://localhost:11434/v1
+OPENAI_API_KEY=ollama
+MODEL_PROVIDER=ollama
+ENV
+
+        ok "Hermes configured for Ollama/Qwen (local model)"
+
+    else
+        info "Configuring Hermes Agent for cloud provider..."
+
+        cat > "$hermes_home/config.yaml" << 'YAML'
+# Cloud provider — edit this file to set your API key and model
+# Common providers: openrouter, anthropic, openai, google
+#
+# Example OpenRouter:
+#   provider: openrouter
+#   default: anthropic/claude-sonnet-4
+#   api_key: sk-or-...
+#
+# Example Anthropic:
+#   provider: anthropic
+#   default: claude-sonnet-4
+#   api_key: sk-ant-...
+
+model:
+  default: openrouter/anthropic/claude-sonnet-4
+  provider: openrouter
+  api_key: ""           # <-- paste your API key here
+  context_length: 16384
+
+agent:
+  max_turns: 90
+
+terminal:
+  backend: local
+  timeout: 300
+
+compression:
+  enabled: true
+
+memory:
+  memory_enabled: true
+  user_profile_enabled: true
+YAML
+
+        ok "Hermes configured for cloud provider"
+        echo ""
+        warn "IMPORTANT: Edit $hermes_home/config.yaml to add your API key!"
+        warn "Or run: hermes setup"
+        echo ""
+    fi
 }
 
 # ── Clone Repo ────────────────────────────────────────────────
@@ -185,7 +276,7 @@ clone_repo() {
 
 # ── Skills ────────────────────────────────────────────────────
 install_deploy_skill() {
-    local skill_dir="${HOME}/.hermes/skills/deploy"
+    local skill_dir="$REAL_HOME/.hermes/skills/deploy"
 
     if [ -d "$INSTALL_DIR/skills/deploy" ]; then
         mkdir -p "$skill_dir"
@@ -240,15 +331,24 @@ main() {
 
     detect_os
     check_root
+    detect_real_user
     check_disk
     check_ram
     echo ""
 
+    # Ask user about local model BEFORE installing anything
+    ask_local_model
+
     install_git
     install_docker
     check_compose
-    install_ollama
-    pull_model "qwen3.5:0.8b"
+
+    if [ "$USE_LOCAL_MODEL" = "yes" ]; then
+        install_ollama
+        pull_model "qwen3.5:0.8b"
+        check_ollama
+    fi
+
     install_hermes
     configure_hermes
     clone_repo
@@ -264,6 +364,9 @@ main() {
     echo "  2. Tell it: 'deploy hermes-k8s'"
     echo "  3. It will guide you through domain + credentials setup"
     echo ""
+    if [ "$USE_LOCAL_MODEL" = "no" ]; then
+        warn "Don't forget to set your API key in $REAL_HOME/.hermes/config.yaml"
+    fi
     echo -e "${CYAN}Repo location:${NC} $INSTALL_DIR"
     echo ""
 }
