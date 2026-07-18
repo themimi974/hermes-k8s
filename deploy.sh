@@ -18,6 +18,7 @@ fail()  { echo -e "${RED}[FAIL]${NC} $*"; exit 1; }
 REPO_URL="https://github.com/themimi974/hermes-k8s.git"
 INSTALL_DIR="/opt/hermes-k8s"
 USE_LOCAL_MODEL=""
+USE_NIM=""
 TLS_METHOD=""
 DNS_PROVIDER=""
 DOMAIN=""
@@ -90,6 +91,30 @@ ask_local_model() {
         case "${answer,,}" in
             y|yes|"") USE_LOCAL_MODEL="yes"; break ;;
             n|no)     USE_LOCAL_MODEL="no";  break ;;
+            *) echo "  Please answer y or n" ;;
+        esac
+    done
+    echo ""
+}
+
+# ── Interactive: NVIDIA NIM? ──────────────────────────────────
+ask_nvidia_nim() {
+    # Only ask if user declined local model
+    if [ "$USE_LOCAL_MODEL" = "yes" ]; then return; fi
+
+    echo ""
+    echo -e "${CYAN}╔══════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║  Use NVIDIA NIM? (free cloud inference)                ║${NC}"
+    echo -e "${CYAN}╚══════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo "  ${GREEN}Yes${NC} — NVIDIA NIM (free, no credit card, default: deepseek-ai/deepseek-v4-pro)"
+    echo "  ${YELLOW}No${NC}  — I'll configure my own provider later"
+    echo ""
+    while true; do
+        read -rp "$(echo -e "${CYAN}Use NVIDIA NIM? [Y/n]: ${NC}")" answer
+        case "${answer,,}" in
+            y|yes|"") USE_NIM="yes"; break ;;
+            n|no)     USE_NIM="no";  break ;;
             *) echo "  Please answer y or n" ;;
         esac
     done
@@ -293,8 +318,39 @@ ENV
 
         ok "Hermes configured for Ollama/Qwen (local model)"
 
+    elif [ "$USE_NIM" = "yes" ]; then
+        info "Configuring Hermes Agent for NVIDIA NIM..."
+        info "Default model: deepseek-ai/deepseek-v4-pro (free)"
+
+        cat > "$hermes_home/config.yaml" << 'YAML'
+model:
+  default: deepseek-ai/deepseek-v4-pro
+  provider: nvidia
+  context_length: 131072
+
+agent:
+  max_turns: 90
+
+terminal:
+  backend: local
+  timeout: 300
+
+compression:
+  enabled: true
+
+memory:
+  memory_enabled: true
+  user_profile_enabled: true
+YAML
+
+        ok "Hermes configured for NVIDIA NIM (deepseek-ai/deepseek-v4-pro)"
+        echo ""
+        echo -e "  ${CYAN}NVIDIA NIM is free — no API key needed.${NC}"
+        echo -e "  To change model later, run: ${GREEN}hermes model${NC}"
+        echo ""
+
     else
-        info "Skipping Ollama — you'll configure Hermes later"
+        info "Skipping model config — you'll configure Hermes later"
         echo ""
         echo -e "  Run ${GREEN}hermes setup${NC} to configure your provider and API key"
         echo -e "  Then ${GREEN}hermes model${NC} to select your model"
@@ -380,6 +436,7 @@ main() {
 
     # Ask user about local model and DNS/TLS BEFORE installing anything
     ask_local_model
+    ask_nvidia_nim
     ask_dns_and_tls
 
     install_git
