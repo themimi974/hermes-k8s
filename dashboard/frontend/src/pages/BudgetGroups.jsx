@@ -96,7 +96,7 @@ export default function BudgetGroups() {
       <div className="flex justify-between items-center mb-6">
         <div>
           <h2 className="text-2xl font-bold text-white">Budget Groups</h2>
-          <p className="text-gray-400 text-sm mt-1">Manage API rate limits and budgets per friend group</p>
+          <p className="text-gray-400 text-sm mt-1">Manage API rate limits and budgets. Friends can belong to multiple groups — models and limits are merged.</p>
         </div>
         <button
           onClick={() => { setShowCreate(true); setEditGroup(null) }}

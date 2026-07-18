@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Optional
 
 from pydantic import BaseModel, Field
-from sqlalchemy import Column, String, DateTime, Integer, Float, Text, Boolean, JSON, func, ForeignKey
+from sqlalchemy import Column, String, DateTime, Integer, Float, Text, Boolean, JSON, func, ForeignKey, Table
 from sqlalchemy.orm import relationship
 
 from database import Base
@@ -40,7 +40,14 @@ class FriendInfo(BaseModel):
     ingressroute_host: Optional[str] = None
     budget_group_id: Optional[int] = None
     budget_group_name: Optional[str] = None
+    budget_groups: list[str] = []
     litellm_key: Optional[str] = None
+    # Per-friend resource overrides (None = use defaults)
+    cpu_request: Optional[str] = None
+    cpu_limit: Optional[str] = None
+    memory_request: Optional[str] = None
+    memory_limit: Optional[str] = None
+    storage_size: Optional[str] = None
 
 
 class FriendDetail(FriendInfo):
@@ -128,6 +135,21 @@ class BudgetGroupDeleteResponse(BaseModel):
     message: str
 
 
+# ── Multi-group + Resource schemas ─────────────────────────────
+
+
+class GroupAssignment(BaseModel):
+    group_ids: list[int]
+
+
+class ResourceUpdate(BaseModel):
+    cpu_request: Optional[str] = None
+    cpu_limit: Optional[str] = None
+    memory_request: Optional[str] = None
+    memory_limit: Optional[str] = None
+    storage_size: Optional[str] = None
+
+
 # ── Model schemas ────────────────────────────────────────────────
 
 
@@ -193,6 +215,14 @@ class UsageSummary(BaseModel):
 
 # ── SQLAlchemy ORM ─────────────────────────────────────────────────
 
+# Many-to-many: friends ↔ budget_groups
+friend_budget_groups = Table(
+    "friend_budget_groups",
+    Base.metadata,
+    Column("friend_id", Integer, ForeignKey("friends.id", ondelete="CASCADE"), primary_key=True),
+    Column("group_id", Integer, ForeignKey("budget_groups.id", ondelete="CASCADE"), primary_key=True),
+)
+
 
 class FriendRecord(Base):
     """Tracks friend metadata in PostgreSQL."""
@@ -205,13 +235,20 @@ class FriendRecord(Base):
     namespace = Column(String(60), nullable=False)
     litellm_key = Column(String(128))
     litellm_key_hash = Column(String(128))
-    budget_group_id = Column(Integer, ForeignKey("budget_groups.id"))
+    budget_group_id = Column(Integer, ForeignKey("budget_groups.id"))  # deprecated — use junction table
     litellm_team_id = Column(String(128))
     is_active = Column(Boolean, default=True)
+    # Per-friend resource overrides (NULL = use settings defaults)
+    cpu_request = Column(String(16))
+    cpu_limit = Column(String(16))
+    memory_request = Column(String(16))
+    memory_limit = Column(String(16))
+    storage_size = Column(String(16))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
-    budget_group = relationship("BudgetGroupRecord", backref="friends")
+    budget_group = relationship("BudgetGroupRecord", backref="friends", foreign_keys=[budget_group_id])
+    groups = relationship("BudgetGroupRecord", secondary=friend_budget_groups, backref="member_friends")
 
 
 class BudgetGroupRecord(Base):

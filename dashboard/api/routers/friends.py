@@ -1,9 +1,11 @@
-"""Friends CRUD router."""
+"""Friends CRUD router — uses junction table for multi-group assignment."""
 from __future__ import annotations
 
 import logging
+from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 
 from models import (
     FriendCreate,
@@ -15,8 +17,11 @@ from models import (
     FriendSnapshot,
     FriendRecord,
     BudgetGroupRecord,
+    GroupAssignment,
+    ResourceUpdate,
 )
 from services import friend_manager, litellm_client
+from services.merge import merge_groups, get_friend_merged_settings
 from database import SessionLocal
 
 logger = logging.getLogger(__name__)
@@ -25,17 +30,25 @@ router = APIRouter(prefix="/api", tags=["friends"])
 
 
 def _enrich_friend(info: FriendInfo) -> FriendInfo:
-    """Add budget group info from DB."""
+    """Add budget group info from DB via junction table."""
     db = SessionLocal()
     try:
         record = db.query(FriendRecord).filter(FriendRecord.name == info.name).first()
         if record:
-            info.budget_group_id = record.budget_group_id
             info.litellm_key = record.litellm_key[:8] + "..." if record.litellm_key else None
-            if record.budget_group_id:
-                group = db.query(BudgetGroupRecord).filter(BudgetGroupRecord.id == record.budget_group_id).first()
-                if group:
-                    info.budget_group_name = group.name
+            # Read from junction table (multi-group)
+            groups = record.groups
+            if groups:
+                info.budget_groups = [g.name for g in groups]
+                # Keep first group as primary for backward compat
+                info.budget_group_id = groups[0].id
+                info.budget_group_name = groups[0].name
+            # Per-friend resource overrides
+            info.cpu_request = record.cpu_request
+            info.cpu_limit = record.cpu_limit
+            info.memory_request = record.memory_request
+            info.memory_limit = record.memory_limit
+            info.storage_size = record.storage_size
         return info
     finally:
         db.close()
@@ -69,7 +82,7 @@ async def create_friend(body: FriendCreate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create friend: {e}")
 
-    # Create LiteLLM virtual key
+    # Create LiteLLM virtual key with default settings (no group yet)
     db = SessionLocal()
     try:
         record = db.query(FriendRecord).filter(FriendRecord.name == body.name).first()
@@ -83,32 +96,15 @@ async def create_friend(body: FriendCreate):
             db.commit()
             db.refresh(record)
 
-        # Get budget group settings for the key
-        models = ["gpt-3.5-turbo"]
-        tpm_limit = 100000
-        rpm_limit = 1000
-        max_budget = 50.0
-        budget_duration = "30d"
-
-        if record.budget_group_id:
-            group = db.query(BudgetGroupRecord).filter(BudgetGroupRecord.id == record.budget_group_id).first()
-            if group:
-                models = group.models or ["gpt-3.5-turbo"]
-                tpm_limit = group.tpm_limit
-                rpm_limit = group.rpm_limit
-                max_budget = group.max_budget
-                budget_duration = group.budget_duration
-
         key_data = await litellm_client.create_virtual_key(
             friend_name=body.name,
-            models=models,
-            tpm_limit=tpm_limit,
-            rpm_limit=rpm_limit,
-            max_budget=max_budget,
-            budget_duration=budget_duration,
+            models=["gpt-3.5-turbo"],
+            tpm_limit=100000,
+            rpm_limit=1000,
+            max_budget=50.0,
+            budget_duration="30d",
         )
 
-        # Store the full key (token) for later use in updates/deletions
         record.litellm_key = key_data["key"]
         record.litellm_key_hash = key_data["key_hash"]
         db.commit()
@@ -136,7 +132,6 @@ async def delete_friend(name: str):
     try:
         record = db.query(FriendRecord).filter(FriendRecord.name == name).first()
         if record and record.litellm_key:
-            # Use the stored key directly for deletion
             await litellm_client.delete_virtual_key(record.litellm_key)
     except Exception as e:
         logger.warning(f"Failed to delete LiteLLM key for '{name}': {e}")
@@ -164,9 +159,15 @@ async def delete_friend(name: str):
     )
 
 
-@router.post("/friends/{name}/assign-group")
-async def assign_budget_group(name: str, group_id: int):
-    """Assign a friend to a budget group and update their LiteLLM key."""
+# ── Multi-group assignment ────────────────────────────────────────
+
+
+@router.post("/friends/{name}/groups")
+async def assign_groups(name: str, body: GroupAssignment):
+    """Assign a friend to one or more budget groups (replaces current assignments).
+
+    Merges settings across all assigned groups and updates the LiteLLM key.
+    """
     db = SessionLocal()
     try:
         friend = db.query(FriendRecord).filter(FriendRecord.name == name).first()
@@ -174,26 +175,192 @@ async def assign_budget_group(name: str, group_id: int):
             # Create DB record if friend exists in k8s but not in DB
             friend = FriendRecord(name=name, username=name, namespace=f"friend-{name}")
             db.add(friend)
+            db.flush()
+
+        # Fetch requested groups
+        groups = []
+        for gid in body.group_ids:
+            group = db.query(BudgetGroupRecord).filter(BudgetGroupRecord.id == gid).first()
+            if not group:
+                raise HTTPException(status_code=404, detail=f"Budget group {gid} not found")
+            groups.append(group)
+
+        # Replace assignments via junction table
+        friend.groups = groups
+        db.commit()
+
+        # Merge settings and update LiteLLM key
+        merged = merge_groups(groups)
+        if friend.litellm_key:
+            await litellm_client.update_virtual_key(
+                token=friend.litellm_key,
+                models=merged["models"],
+                tpm_limit=merged["tpm_limit"],
+                rpm_limit=merged["rpm_limit"],
+                max_budget=merged["max_budget"],
+                budget_duration=merged["budget_duration"],
+            )
+            logger.info(f"Updated LiteLLM key for '{name}' with {len(groups)} groups")
+
+        group_names = [g.name for g in groups]
+        return {
+            "message": f"Friend '{name}' assigned to groups: {', '.join(group_names)}",
+            "groups": group_names,
+            "merged": merged,
+        }
+    finally:
+        db.close()
+
+
+@router.post("/friends/{name}/groups/{group_id}")
+async def add_group(name: str, group_id: int):
+    """Add a single group to a friend's assignments (without replacing others)."""
+    db = SessionLocal()
+    try:
+        friend = db.query(FriendRecord).filter(FriendRecord.name == name).first()
+        if not friend:
+            friend = FriendRecord(name=name, username=name, namespace=f"friend-{name}")
+            db.add(friend)
+            db.flush()
 
         group = db.query(BudgetGroupRecord).filter(BudgetGroupRecord.id == group_id).first()
         if not group:
             raise HTTPException(status_code=404, detail=f"Budget group {group_id} not found")
 
-        friend.budget_group_id = group_id
-        db.commit()
+        # Add if not already assigned
+        if group not in friend.groups:
+            friend.groups.append(group)
+            db.commit()
 
-        # Update LiteLLM key with new group settings
+        # Re-merge and update LiteLLM key
+        merged = merge_groups(friend.groups)
         if friend.litellm_key:
             await litellm_client.update_virtual_key(
                 token=friend.litellm_key,
-                models=group.models or ["gpt-3.5-turbo"],
-                tpm_limit=group.tpm_limit,
-                rpm_limit=group.rpm_limit,
-                max_budget=group.max_budget,
-                budget_duration=group.budget_duration,
+                models=merged["models"],
+                tpm_limit=merged["tpm_limit"],
+                rpm_limit=merged["rpm_limit"],
+                max_budget=merged["max_budget"],
+                budget_duration=merged["budget_duration"],
             )
-            logger.info(f"Updated LiteLLM key for friend '{name}' with group '{group.name}'")
 
-        return {"message": f"Friend '{name}' assigned to group '{group.name}'"}
+        return {
+            "message": f"Added group '{group.name}' to friend '{name}'",
+            "groups": [g.name for g in friend.groups],
+            "merged": merged,
+        }
     finally:
         db.close()
+
+
+@router.delete("/friends/{name}/groups/{group_id}")
+async def remove_group(name: str, group_id: int):
+    """Remove a single group from a friend's assignments."""
+    db = SessionLocal()
+    try:
+        friend = db.query(FriendRecord).filter(FriendRecord.name == name).first()
+        if not friend:
+            raise HTTPException(status_code=404, detail=f"Friend '{name}' not found")
+
+        group = db.query(BudgetGroupRecord).filter(BudgetGroupRecord.id == group_id).first()
+        if not group:
+            raise HTTPException(status_code=404, detail=f"Budget group {group_id} not found")
+
+        if group in friend.groups:
+            friend.groups.remove(group)
+            db.commit()
+
+        # Re-merge and update LiteLLM key
+        merged = merge_groups(friend.groups)
+        if friend.litellm_key:
+            await litellm_client.update_virtual_key(
+                token=friend.litellm_key,
+                models=merged["models"],
+                tpm_limit=merged["tpm_limit"],
+                rpm_limit=merged["rpm_limit"],
+                max_budget=merged["max_budget"],
+                budget_duration=merged["budget_duration"],
+            )
+
+        return {
+            "message": f"Removed group '{group.name}' from friend '{name}'",
+            "groups": [g.name for g in friend.groups],
+            "merged": merged,
+        }
+    finally:
+        db.close()
+
+
+@router.get("/friends/{name}/groups")
+async def get_friend_groups(name: str):
+    """Get all groups assigned to a friend with merged settings."""
+    db = SessionLocal()
+    try:
+        friend = db.query(FriendRecord).filter(FriendRecord.name == name).first()
+        if not friend:
+            raise HTTPException(status_code=404, detail=f"Friend '{name}' not found")
+
+        groups = friend.groups
+        merged = merge_groups(groups)
+
+        return {
+            "friend": name,
+            "groups": [
+                {
+                    "id": g.id,
+                    "name": g.name,
+                    "models": g.models or [],
+                    "tpm_limit": g.tpm_limit,
+                    "rpm_limit": g.rpm_limit,
+                    "max_budget": g.max_budget,
+                    "budget_duration": g.budget_duration,
+                }
+                for g in groups
+            ],
+            "merged": merged,
+        }
+    finally:
+        db.close()
+
+
+# ── Per-friend resource overrides ─────────────────────────────────
+
+
+@router.put("/friends/{name}/resources")
+async def update_friend_resources(name: str, body: ResourceUpdate):
+    """Update per-friend resource overrides (CPU, memory, storage).
+
+    Set a field to null to clear the override and revert to defaults.
+    """
+    db = SessionLocal()
+    try:
+        friend = db.query(FriendRecord).filter(FriendRecord.name == name).first()
+        if not friend:
+            raise HTTPException(status_code=404, detail=f"Friend '{name}' not found")
+
+        overrides = body.model_dump(exclude_unset=True)
+        for key, value in overrides.items():
+            setattr(friend, key, value)
+        db.commit()
+
+        return {
+            "message": f"Resources updated for friend '{name}'",
+            "overrides": {
+                "cpu_request": friend.cpu_request,
+                "cpu_limit": friend.cpu_limit,
+                "memory_request": friend.memory_request,
+                "memory_limit": friend.memory_limit,
+                "storage_size": friend.storage_size,
+            },
+        }
+    finally:
+        db.close()
+
+
+# ── Legacy endpoint (backward compat) ────────────────────────────
+
+
+@router.post("/friends/{name}/assign-group")
+async def assign_budget_group(name: str, group_id: int):
+    """Legacy: assign a friend to a single budget group. Use /groups instead."""
+    return await assign_groups(name, GroupAssignment(group_ids=[group_id]))
