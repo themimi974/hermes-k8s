@@ -54,7 +54,7 @@ If user declined local model, ask about NVIDIA NIM:
 | **NVIDIA NIM** | Free cloud inference, no API key needed | Default model: `deepseek-ai/deepseek-v4-pro` (131k context) |
 | **Manual** | User will configure their own provider later | Skip — user runs `hermes setup` afterwards |
 
-**NVIDIA NIM config written to `~/.hermes/config.yaml`:**
+**NVIDIA NIM config written to `/root/.hermes/config.yaml`:**
 ```yaml
 model:
   default: deepseek-ai/deepseek-v4-pro
@@ -172,7 +172,7 @@ Print summary:
 Store credentials in:
 - k8s Secrets (for pods)
 - `.env` file (for scripts, gitignored)
-- `~/.hermes/.env` (for Hermes Agent)
+- `/root/.hermes/.env` (for Hermes Agent)
 
 ## Troubleshooting Reference
 

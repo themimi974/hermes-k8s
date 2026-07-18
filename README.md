@@ -17,7 +17,9 @@ This installs everything: Docker, Git, Ollama (optional), Hermes Agent, k3s, and
 - DNS provider (Cloudflare, DuckDNS, or none)
 - TLS method (Let's Encrypt, self-signed, or HTTP)
 
-Once done, run `hermes` and tell it: **"deploy hermes-k8s"**
+Once done, run `sudo hermes` and tell it: **"deploy hermes-k8s"**
+
+> **Why `sudo`?** Hermes config lives at `/root/.hermes/` (not your user's home) because `sudo hermes` resolves `~` as root's home. k3s also requires root. Always launch with `sudo hermes`.
 
 ### Manual install
 
@@ -37,11 +39,12 @@ ollama pull qwen3.5:0.8b
 # 4. Install Hermes Agent
 curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
 
-# 5. Copy deployment skill to Hermes
-cp -r skills/deploy ~/.hermes/skills/
+# 5. Copy deployment skill to Hermes (root-owned)
+sudo mkdir -p /root/.hermes/skills
+sudo cp -r skills/deploy /root/.hermes/skills/
 
-# 6. Start Hermes — it will guide you through the rest
-hermes
+# 6. Start Hermes as root — it will guide you through the rest
+sudo hermes
 ```
 
 Once Hermes is running, tell it: **"deploy hermes-k8s"** — it will read the deployment skill and walk you through everything.

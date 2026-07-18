@@ -275,7 +275,7 @@ install_hermes() {
 }
 
 configure_hermes() {
-    local hermes_home="$REAL_HOME/.hermes"
+    local hermes_home="/root/.hermes"
     mkdir -p "$hermes_home"
 
     if [ -f "$hermes_home/config.yaml" ]; then
@@ -374,7 +374,7 @@ clone_repo() {
 
 # ── Skills ────────────────────────────────────────────────────
 install_deploy_skill() {
-    local skill_dir="$REAL_HOME/.hermes/skills/deploy"
+    local skill_dir="/root/.hermes/skills/deploy"
 
     if [ -d "$INSTALL_DIR/skills/deploy" ]; then
         mkdir -p "$skill_dir"
@@ -460,7 +460,8 @@ main() {
     ok "All prerequisites installed!"
     echo ""
     echo -e "${CYAN}Next steps:${NC}"
-    echo "  1. Run 'hermes' to start the agent"
+    echo "  1. Run 'sudo hermes' to start the agent (root is required —"
+    echo "     Hermes config and k3s access both live under /root)"
     echo "  2. Tell it: 'deploy hermes-k8s'"
     echo "  3. It will guide you through domain + credentials setup"
     echo ""
