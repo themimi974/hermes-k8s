@@ -136,12 +136,14 @@ ask_dns_and_tls() {
             echo "    1. Go to ${CYAN}https://www.duckdns.org${NC}"
             echo "    2. Sign in with GitHub/Google"
             echo "    3. Create a subdomain (e.g. 'myserver')"
-            echo "    4. Copy your DuckDNS token"
             echo ""
             read -rp "$(echo -e "${CYAN}DuckDNS subdomain (without .duckdns.org): ${NC}")" DUCKDNS_SUB
-            read -rp "$(echo -e "${CYAN}DuckDNS token: ${NC}")" DUCKDNS_TOKEN
             DOMAIN="${DUCKDNS_SUB}.duckdns.org"
             TLS_METHOD="selfsigned"
+            echo ""
+            echo -e "  ${YELLOW}Optional:${NC} DuckDNS token to auto-update your IP"
+            echo "  (skip if you'll set the IP manually in the DuckDNS dashboard)"
+            read -rp "$(echo -e "${CYAN}DuckDNS token (leave empty to skip): ${NC}")" DUCKDNS_TOKEN
             ;;
         none)
             echo -e "  ${YELLOW}No DNS / IP only${NC} — self-signed certs or HTTP"
