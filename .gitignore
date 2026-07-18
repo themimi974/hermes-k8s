@@ -16,3 +16,7 @@ Thumbs.db
 /tmp/
 docs/
 __pycache__/
+
+# Frontend build
+dashboard/frontend/node_modules/
+dashboard/frontend/dist/

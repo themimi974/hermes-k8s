@@ -1,7 +1,7 @@
 ---
 name: hermes-k8s-deploy
 description: "Deploy and manage hermes-k8s — per-user isolated Hermes Agent subdomains with LiteLLM gateway and local LLM."
-version: 1.4.0
+version: 1.5.0
 author: hermes-k8s
 platforms: [linux]
 metadata:
@@ -186,7 +186,7 @@ Ask for these values — NEVER hardcode or assume:
 ### Phase 3: Build & Deploy
 
 1. **Clone repo** — `git clone https://github.com/themimi974/hermes-k8s.git`
-2. **Build images** — podman build 4 images (gateway, dashboard-api, dashboard-frontend, litellm)
+2. **Build images** — podman build 4 images (gateway, dashboard-api, dashboard-frontend, litellm). Use `--no-cache` if frontend shows placeholder HTML (Vite build cache issue).
 3. **Import to k3s** — `podman save | k3s ctr images import` for each image
 4. **Apply manifests with substitution** — use `scripts/apply-manifest.sh` to substitute `__DOMAIN__` and `__TLS__` in each manifest:
    ```bash
@@ -195,7 +195,7 @@ Ask for these values — NEVER hardcode or assume:
 
    bash scripts/apply-manifest.sh gateway/ingressroute.yaml "$DOMAIN" "$TLS"
    bash scripts/apply-manifest.sh dashboard/manifests/50-ingressroute.yaml "$DOMAIN" "$TLS"
-   kubectl apply -f dashboard/manifests/  # non-templated manifests
+   kubectl apply -f dashboard/manifests/  # all non-templated manifests (namespace, postgres, frontend, RBAC)
    ```
 5. **Deploy gateway** — `kubectl apply -f gateway/` (non-templated manifests like deployment, service, configmap)
 6. **Configure LiteLLM** — create/update ConfigMap
@@ -256,6 +256,8 @@ Store credentials in:
 | DuckDNS not resolving | IP not updated | Re-run `curl "https://www.duckdns.org/update?domains=...&token=...&ip=..."` |
 | LiteLLM 401 on health | No auth header | Add `Authorization: Bearer ***` |
 | Dashboard 502 | API pod down | `kubectl rollout restart deployment dashboard-api -n dashboard` |
+| Dashboard frontend shows "Infrastructure deployed. Frontend coming soon" | Wrong image in manifest — using nginx:1.27-alpine + ConfigMap HTML instead of built image | Ensure `42-frontend-deployment.yaml` uses `localhost/hermes-dashboard-frontend:latest` with `imagePullPolicy: Never` |
+| Dashboard API 500 on /api/friends | dashboard-api ServiceAccount has no cluster permissions | Apply `dashboard/manifests/60-dashboard-rbac.yaml` (ClusterRole + ClusterRoleBinding) |
 | Disk full | Image/pod accumulation | `podman system prune -af` |
 | Friend pod Pending | PVC or image issue | Check PVC status, import image |
 | Traefik 502, `dial tcp ... no route to host` | kube-router netpol iptables blocking pod traffic | Add `--disable-network-policy` to k3s install; if already installed, reboot to clear stale rules |

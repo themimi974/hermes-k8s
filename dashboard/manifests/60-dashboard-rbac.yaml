@@ -1,0 +1,38 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: dashboard-api
+rules:
+  # Core API — namespaces, pods, services, PVCs, secrets, configmaps, resourcequotas
+  - apiGroups: [""]
+    resources: ["namespaces", "pods", "services", "persistentvolumeclaims", "secrets", "configmaps", "resourcequotas"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  # Apps API — deployments, replicasets
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  # Batch API — jobs (for restore)
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "create", "delete"]
+  # Traefik API — ingressroutes, middlewares
+  - apiGroups: ["traefik.io"]
+    resources: ["ingressroutes", "middlewares"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  # Networking API — ingresses
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: dashboard-api
+subjects:
+  - kind: ServiceAccount
+    name: default
+    namespace: dashboard
+roleRef:
+  kind: ClusterRole
+  name: dashboard-api
+  apiGroup: rbac.authorization.k8s.io
