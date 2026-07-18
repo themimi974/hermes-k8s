@@ -17,5 +17,57 @@ spec:
     spec:
       containers:
         - name: dashboard-api
-          image: python:3.11-slim
-          command: ["sleep", "infinity"]
+          image: localhost/hermes-dashboard-api:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8000
+          env:
+            - name: POSTGRES_HOST
+              value: postgresql.dashboard.svc.cluster.local
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_DB
+              value: hermes_dashboard
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: POSTGRES_PASSWORD
+            - name: LITELLM_HOST
+              value: litellm.litellm.svc.cluster.local
+            - name: LITELLM_PORT
+              value: "4000"
+            - name: LITELLM_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: litellm-credentials
+                  key: LITELLM_MASTER_KEY
+                  optional: true
+            - name: FRIEND_DOMAIN
+              value: "__DOMAIN__"
+            - name: TLS_CERT_RESOLVER
+              value: "__TLS_RESOLVER__"
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 20

@@ -358,6 +358,10 @@ build_images() {
     docker build -t localhost/hermes-dashboard-frontend:latest "$INSTALL_DIR/dashboard/frontend"
     docker save localhost/hermes-dashboard-frontend:latest | k3s ctr images import -
 
+    info "Building litellm image..."
+    docker build -t localhost/hermes-litellm:latest "$INSTALL_DIR/litellm"
+    docker save localhost/hermes-litellm:latest | k3s ctr images import -
+
     ok "All images built and imported"
 }
 

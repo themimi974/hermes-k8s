@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     postgres_host: str = "postgresql.dashboard.svc.cluster.local"
     postgres_port: int = 5432
     postgres_user: str = "hermes"
-    postgres_password: str = "hermes_db_pass_2026"
+    postgres_password: str = ""  # MUST be set via POSTGRES_PASSWORD env var
     postgres_db: str = "dashboard"
 
     # LiteLLM

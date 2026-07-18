@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: litellm-config
+  namespace: litellm
+data:
+  litellm_config.yaml: |
+    model_list:
+      - model_name: deepseek-v4-pro
+        litellm_params:
+          model: nvidia/deepseek-ai/deepseek-v4-pro
+          api_key: os.environ/NVIDIA_API_KEY
+          api_base: https://integrate.api.nvidia.com/v1
+
+    general_settings:
+      master_key: os.environ/LITELLM_MASTER_KEY
+
+    litellm_settings:
+      drop_params: true

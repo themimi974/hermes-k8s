@@ -1,7 +1,7 @@
 ---
 name: hermes-k8s-deploy
 description: "Deploy and manage hermes-k8s — per-user isolated Hermes Agent subdomains with LiteLLM gateway and local LLM."
-version: 1.1.0
+version: 1.2.0
 author: hermes-k8s
 platforms: [linux]
 metadata:
@@ -62,7 +62,20 @@ model:
   context_length: 131072
 ```
 
-#### Step 2: DNS Provider
+#### Step 2: Network Reachability
+
+Ask BEFORE DNS setup:
+
+> "Will this be reached only from your local network, or also from the public internet?"
+
+| Option | Behavior |
+|--------|----------|
+| **Local only** | Use the machine's LAN IP (e.g. `192.168.1.x`) for domain/IP purposes. Skip public IP lookup entirely. DuckDNS still works but points to LAN IP. |
+| **Public** | Look up public IP via `curl -s https://api.ipify.org` if needed (e.g. for DuckDNS record update). |
+
+This prevents the agent from silently using a public IP on a LAN-only deploy.
+
+#### Step 3: DNS Provider
 
 Ask the user which DNS setup they have:
 
@@ -86,7 +99,7 @@ Ask the user which DNS setup they have:
 curl -s "https://www.duckdns.org/update?domains=<SUBDOMAIN>&token=<TOKEN>&ip=<SERVER_IP>"
 ```
 
-#### Step 3: TLS Method (based on DNS choice)
+#### Step 4: TLS Method (based on DNS choice)
 
 | DNS Provider | Recommended TLS | Why |
 |--------------|----------------|-----|
@@ -110,18 +123,27 @@ fi
 mkcert -install  # installs local CA (optional, removes browser warnings)
 mkcert "*.${DOMAIN}" "${DOMAIN}" "localhost" "127.0.0.1"
 
-# Create k8s TLS secret
-kubectl create secret tls hermes-tls \
-  --cert="*.${DOMAIN}"*pem \
-  --key="*.${DOMAIN}"*-key.pem \
-  -n traefik --dry-run=client -o yaml | kubectl apply -f -
+# Create k8s TLS secret in ALL namespaces that have IngressRoutes
+# Traefik requires the secret to be in the SAME namespace as the IngressRoute.
+for ns in dashboard auth litellm; do
+  kubectl create secret tls hermes-tls \
+    --cert="*.${DOMAIN}"*pem \
+    --key="*.${DOMAIN}"*-key.pem \
+    -n "$ns" --dry-run=client -o yaml | kubectl apply -f -
+done
 ```
 
 **If Let's Encrypt (Cloudflare):** use `certResolver: cfresolver` as before (requires Cloudflare API token in Traefik static config).
 
 **If HTTP only:** use `entryPoints: [web]` in IngressRoutes, no TLS section.
 
-#### Step 4: Other Credentials
+**Verifying self-signed certs:** Do NOT use `curl -H "Host: ..." https://<ip>` — TLS SNI happens before the HTTP Host header, so curl sends no SNI for a bare IP and you'll always see Traefik's fallback default cert. Use `--resolve` instead:
+```bash
+curl -sk --resolve dashboard.example.com:443:192.168.1.62 https://dashboard.example.com
+```
+This makes curl treat the domain as resolving to the IP while still sending the domain as SNI — matching what a real browser does.
+
+#### Step 5: Other Credentials
 
 Ask for these values — NEVER hardcode or assume:
 
@@ -177,6 +199,18 @@ Print summary:
 - First 8 + last 4 characters: `sk-mas...ere`
 - Or mask completely: `***`
 
+**Generated secrets must be consumed in a single command** — never printed to stdout, stored in a shell variable that gets echoed, or written to a file that's later `cat`'d. The agent's secret-redaction truncates displayed values, so re-displaying a generated key produces a different (wrong) string.
+
+Correct pattern — generate and apply in one shot:
+```bash
+kubectl create secret generic litellm-credentials -n litellm \
+  --from-literal=LITELLM_MASTER_KEY="sk-master-$(openssl rand -hex 24)" \
+  --from-literal=NVIDIA_API_KEY="$NVIDIA_API_KEY" \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+If a value must be reused across multiple manifests, generate it once into a variable within a single command block and reference the variable directly — never print it in between.
+
 Store credentials in:
 - k8s Secrets (for pods)
 - `.env` file (for scripts, gitignored)
@@ -203,7 +237,8 @@ Store credentials in:
 | `/home/admin/workspace/hermes-friends/` | Repo root |
 | `deploy.sh` | Main deployment script |
 | `skills/deploy/SKILL.md` | This file |
+| `litellm/` | LiteLLM Dockerfile + manifests |
 | `dashboard/` | API + Frontend + Manifests |
 | `gateway/` | Landing page deployment |
-| `scripts/` | Friend management scripts |
+| `scripts/` | Friend management + apply-manifest.sh |
 | `docs/` | Detailed documentation |
