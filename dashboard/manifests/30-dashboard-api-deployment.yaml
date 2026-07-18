@@ -15,6 +15,7 @@ spec:
       labels:
         app: dashboard-api
     spec:
+      serviceAccountName: default
       containers:
         - name: dashboard-api
           image: localhost/hermes-dashboard-api:latest

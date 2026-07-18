@@ -1,7 +1,21 @@
 #!/bin/bash
-# Push the podman-built ttyd image into k3s containerd
-# Run interactively: bash ~/workspace/hermes-friends/scripts/import-image.sh
+# Push podman-built images into k3s containerd
+# Run interactively: bash scripts/import-image.sh
 set -euo pipefail
-podman save hermes-friends/ttyd:latest | sudo k3s ctr images import -
-echo "✓ Image hermes-friends/ttyd:latest imported into k3s"
-sudo k3s ctr images list | grep ttyd
+
+IMAGES=(
+    "localhost/hermes-friends/ttyd:latest"
+    "localhost/hermes-dashboard-api:latest"
+    "localhost/hermes-dashboard-frontend:latest"
+    "localhost/hermes-litellm:latest"
+)
+
+for img in "${IMAGES[@]}"; do
+    echo "Importing $img..."
+    podman save "$img" | sudo k3s ctr images import -
+    echo "✓ $img imported"
+done
+
+echo ""
+echo "Verifying:"
+sudo k3s ctr images list | grep -E "hermes-|ttyd"

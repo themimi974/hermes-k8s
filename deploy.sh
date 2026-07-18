@@ -340,6 +340,20 @@ install_deploy_skill() {
     fi
 }
 
+# ── Firewalld (Fedora/RHEL) ────────────────────────────────────
+fix_firewalld() {
+    if ! command -v firewall-cmd &>/dev/null; then return; fi
+    if ! systemctl is-active --quiet firewalld 2>/dev/null; then
+        ok "Firewalld not active — skipping"
+        return
+    fi
+    info "Firewalld detected — trusting k3s bridge interfaces..."
+    firewall-cmd --zone=trusted --add-interface=cni0 --permanent 2>/dev/null || true
+    firewall-cmd --zone=trusted --add-interface=flannel.1 --permanent 2>/dev/null || true
+    firewall-cmd --reload 2>/dev/null || true
+    ok "Firewalld: cni0 + flannel.1 trusted"
+}
+
 # ── k3s ───────────────────────────────────────────────────────
 install_k3s() {
     if command -v k3s &>/dev/null; then
@@ -363,16 +377,16 @@ build_images() {
     fi
 
     info "Building ttyd image..."
-    podman build -t localhost/hermes-friends/ttyd:latest "$INSTALL_DIR"
+    podman build --no-cache -t localhost/hermes-friends/ttyd:latest "$INSTALL_DIR"
 
     info "Building dashboard-api image..."
-    podman build -t localhost/hermes-dashboard-api:latest "$INSTALL_DIR/dashboard/api"
+    podman build --no-cache -t localhost/hermes-dashboard-api:latest "$INSTALL_DIR/dashboard/api"
 
     info "Building dashboard-frontend image..."
-    podman build -t localhost/hermes-dashboard-frontend:latest "$INSTALL_DIR/dashboard/frontend"
+    podman build --no-cache -t localhost/hermes-dashboard-frontend:latest "$INSTALL_DIR/dashboard/frontend"
 
     info "Building litellm image..."
-    podman build -t localhost/hermes-litellm:latest "$INSTALL_DIR/litellm"
+    podman build --no-cache -t localhost/hermes-litellm:latest "$INSTALL_DIR/litellm"
 
     ok "All images built"
 }
@@ -417,6 +431,7 @@ main() {
     install_hermes
     configure_hermes
     clone_repo
+    fix_firewalld
     install_k3s
     build_images
     import_to_k3s

@@ -1,7 +1,7 @@
 ---
 name: hermes-k8s-deploy
 description: "Deploy and manage hermes-k8s — per-user isolated Hermes Agent subdomains with LiteLLM gateway and local LLM."
-version: 1.5.0
+version: 1.6.0
 author: hermes-k8s
 platforms: [linux]
 metadata:
@@ -271,7 +271,7 @@ Store credentials in:
 
 | Path | Purpose |
 |------|---------|
-| `/home/admin/workspace/hermes-friends/` | Repo root |
+| `/home/admin/workspace/hermes-k8s/` | Repo root |
 | `deploy.sh` | Main deployment script |
 | `skills/deploy/SKILL.md` | This file |
 | `litellm/` | LiteLLM Dockerfile + manifests |
