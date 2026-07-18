@@ -1,7 +1,7 @@
 ---
 name: hermes-k8s-deploy
 description: "Deploy and manage hermes-k8s — per-user isolated Hermes Agent subdomains with LiteLLM gateway and local LLM."
-version: 1.3.0
+version: 1.4.0
 author: hermes-k8s
 platforms: [linux]
 metadata:
@@ -36,11 +36,41 @@ When the user says "deploy hermes-k8s", follow these steps IN ORDER:
 
 1. **OS detection** — check `/etc/os-release`
 2. **Podman** — `podman --version`, install if missing (NOT Docker — it conflicts with k3s networking)
-3. **Git** — `git --version`
-4. **Disk** — need ≥10GB free
-5. **RAM** — need ≥4GB
-6. **Ollama** — `ollama --version`, install if missing
-7. **Qwen model** — `ollama pull qwen3.5:0.8b`
+3. **Firewalld** (Fedora/RHEL only) — see below
+4. **Git** — `git --version`
+5. **Disk** — need ≥10GB free
+6. **RAM** — need ≥4GB
+7. **Ollama** — `ollama --version`, install if missing
+8. **Qwen model** — `ollama pull qwen3.5:0.8b`
+
+#### Firewalld (Fedora/RHEL — CRITICAL)
+
+On Fedora/RHEL, `firewalld` runs by default and blocks pod-to-pod traffic on `cni0`. This causes Traefik 502 / `no route to host` errors. **Must be fixed BEFORE k3s install.**
+
+```bash
+# Check if firewalld is running
+systemctl is-active firewalld
+
+# If active, trust the k3s bridge interfaces BEFORE installing k3s
+firewall-cmd --zone=trusted --add-interface=cni0 --permanent
+firewall-cmd --zone=trusted --add-interface=flannel.1 --permanent
+firewall-cmd --reload
+
+# Verify
+firewall-cmd --list-interfaces --zone=trusted
+# Should show: cni0 flannel.1
+```
+
+**Why this happens:** Firewalld's default zone drops traffic on interfaces not explicitly trusted. k3s creates `cni0` (pod bridge) and `flannel.1` (overlay) — both get blocked until trusted.
+
+**If you forgot and already installed k3s:** Same fix works, but you'll need to restart affected pods or reboot:
+```bash
+firewall-cmd --zone=trusted --add-interface=cni0 --permanent
+firewall-cmd --zone=trusted --add-interface=flannel.1 --permanent
+firewall-cmd --reload
+# Then either reboot, or restart Traefik + all deployments
+kubectl rollout restart deployment traefik -n kube-system
+```
 
 ### Phase 2: Configuration (ASK USER)
 
@@ -229,6 +259,7 @@ Store credentials in:
 | Disk full | Image/pod accumulation | `podman system prune -af` |
 | Friend pod Pending | PVC or image issue | Check PVC status, import image |
 | Traefik 502, `dial tcp ... no route to host` | kube-router netpol iptables blocking pod traffic | Add `--disable-network-policy` to k3s install; if already installed, reboot to clear stale rules |
+| Traefik 502, `dial tcp ... no route to host` (Fedora/RHEL) | firewalld not trusted on cni0/flannel.1 | `firewall-cmd --zone=trusted --add-interface=cni0 --permanent && firewall-cmd --zone=trusted --add-interface=flannel.1 --permanent && firewall-cmd --reload` |
 | cni0 missing / all pods broken networking | Docker iptables conflicting with k3s flannel | `systemctl disable --now docker docker.socket` then reboot — Docker must not run alongside k3s |
 | Middleware "auth secret must be set" or "allowCrossNamespace is disabled" | `hermes-basic` middleware referenced but not defined | Single-node deploys: no auth middleware needed (Traefik/network boundary is sufficient). For public deploys: create real htpasswd middleware in each namespace. |
 
