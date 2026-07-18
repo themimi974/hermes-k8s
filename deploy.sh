@@ -87,7 +87,7 @@ ask_local_model() {
     echo "  ${YELLOW}No${NC}  — Use a cloud provider (OpenRouter, Anthropic, etc.)"
     echo ""
     while true; do
-        read -rp "$(echo -e "${CYAN}Use local model? [Y/n]: ${NC}")" answer
+        read -rp "$(echo -e "${CYAN}Use local model? [Y/n]: ${NC}")" answer </dev/tty
         case "${answer,,}" in
             y|yes|"") USE_LOCAL_MODEL="yes"; break ;;
             n|no)     USE_LOCAL_MODEL="no";  break ;;
@@ -111,7 +111,7 @@ ask_nvidia_nim() {
     echo "  ${YELLOW}No${NC}  — I'll configure my own provider later"
     echo ""
     while true; do
-        read -rp "$(echo -e "${CYAN}Use NVIDIA NIM? [Y/n]: ${NC}")" answer
+        read -rp "$(echo -e "${CYAN}Use NVIDIA NIM? [Y/n]: ${NC}")" answer </dev/tty
         case "${answer,,}" in
             y|yes|"") USE_NIM="yes"; break ;;
             n|no)     USE_NIM="no";  break ;;
@@ -134,7 +134,7 @@ ask_dns_and_tls() {
     echo ""
 
     while true; do
-        read -rp "$(echo -e "${CYAN}DNS provider? [1/2/3]: ${NC}")" dns_choice
+        read -rp "$(echo -e "${CYAN}DNS provider? [1/2/3]: ${NC}")" dns_choice </dev/tty
         case "$dns_choice" in
             1) DNS_PROVIDER="cloudflare"; break ;;
             2) DNS_PROVIDER="duckdns";   break ;;
@@ -151,9 +151,9 @@ ask_dns_and_tls() {
             echo "    • A Cloudflare API token (DNS edit permission)"
             echo "    • An email for Let's Encrypt registration"
             echo ""
-            read -rp "$(echo -e "${CYAN}Domain (e.g. hermes.example.com): ${NC}")" DOMAIN
-            read -rp "$(echo -e "${CYAN}Email for Let's Encrypt: ${NC}")" LE_EMAIL
-            read -rsp "$(echo -e "${CYAN}Cloudflare API token: ${NC}")" CF_TOKEN; echo
+            read -rp "$(echo -e "${CYAN}Domain (e.g. hermes.example.com): ${NC}")" DOMAIN </dev/tty
+            read -rp "$(echo -e "${CYAN}Email for Let's Encrypt: ${NC}")" LE_EMAIL </dev/tty
+            read -rsp "$(echo -e "${CYAN}Cloudflare API token: ${NC}")" CF_TOKEN </dev/tty; echo
             TLS_METHOD="letsencrypt"
             ;;
         duckdns)
@@ -162,19 +162,19 @@ ask_dns_and_tls() {
             echo "    2. Sign in with GitHub/Google"
             echo "    3. Create a subdomain (e.g. 'myserver')"
             echo ""
-            read -rp "$(echo -e "${CYAN}DuckDNS subdomain (without .duckdns.org): ${NC}")" DUCKDNS_SUB
+            read -rp "$(echo -e "${CYAN}DuckDNS subdomain (without .duckdns.org): ${NC}")" DUCKDNS_SUB </dev/tty
             DOMAIN="${DUCKDNS_SUB}.duckdns.org"
             TLS_METHOD="selfsigned"
             echo ""
             echo -e "  ${YELLOW}Optional:${NC} DuckDNS token to auto-update your IP"
             echo "  (skip if you'll set the IP manually in the DuckDNS dashboard)"
-            read -rp "$(echo -e "${CYAN}DuckDNS token (leave empty to skip): ${NC}")" DUCKDNS_TOKEN
+            read -rp "$(echo -e "${CYAN}DuckDNS token (leave empty to skip): ${NC}")" DUCKDNS_TOKEN </dev/tty
             ;;
         none)
             echo -e "  ${YELLOW}No DNS / IP only${NC} — self-signed certs or HTTP"
             echo ""
             while true; do
-                read -rp "$(echo -e "${CYAN}Use HTTPS (self-signed)? [Y/n]: ${NC}")" https_choice
+                read -rp "$(echo -e "${CYAN}Use HTTPS (self-signed)? [Y/n]: ${NC}")" https_choice </dev/tty
                 case "${https_choice,,}" in
                     y|yes|"") TLS_METHOD="selfsigned"; break ;;
                     n|no)     TLS_METHOD="http";      break ;;
@@ -182,7 +182,7 @@ ask_dns_and_tls() {
                 esac
             done
             if [ "$TLS_METHOD" = "selfsigned" ]; then
-                read -rp "$(echo -e "${CYAN}Domain or IP (e.g. 192.168.1.62): ${NC}")" DOMAIN
+                read -rp "$(echo -e "${CYAN}Domain or IP (e.g. 192.168.1.62): ${NC}")" DOMAIN </dev/tty
             fi
             ;;
     esac
