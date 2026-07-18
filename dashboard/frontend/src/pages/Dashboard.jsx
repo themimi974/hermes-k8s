@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
+import { useConfig } from '../hooks/useConfig'
 
 const API_BASE = '/api'
 
@@ -19,7 +20,7 @@ function StatusBadge({ status }) {
   )
 }
 
-function FriendCard({ friend, onSave, onRestore, onDelete }) {
+function FriendCard({ friend, onSave, onRestore, onDelete, domain }) {
   return (
     <div className="bg-gray-800 rounded-xl shadow-xl border border-gray-700 p-6 hover:border-blue-500 transition-colors">
       <div className="flex items-start justify-between mb-4">
@@ -41,12 +42,12 @@ function FriendCard({ friend, onSave, onRestore, onDelete }) {
         <div className="flex items-center">
           <span className="text-gray-500 w-20">Subdomain:</span>
           <a 
-            href={`https://${friend.name}.hermes.caron.fun`}
+            href={`https://${friend.name}.${domain}`}
             target="_blank"
             rel="noopener noreferrer"
             className="text-blue-400 hover:text-blue-300 underline"
           >
-            {friend.name}.hermes.caron.fun
+            {friend.name}.{domain}
           </a>
         </div>
       </div>
@@ -76,6 +77,7 @@ function FriendCard({ friend, onSave, onRestore, onDelete }) {
 }
 
 function Dashboard() {
+  const { domain } = useConfig()
   const [friends, setFriends] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -208,6 +210,7 @@ function Dashboard() {
               onSave={handleSave}
               onRestore={handleRestore}
               onDelete={handleDelete}
+              domain={domain}
             />
           ))}
         </div>

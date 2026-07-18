@@ -314,28 +314,40 @@ def create_service(ns: str) -> None:
 
 
 def create_ingressroute(ns: str, host: str) -> None:
-    """Create Traefik IngressRoute."""
+    """Create Traefik IngressRoute — adapts to TLS method."""
+    tls_method = settings.tls_method
+
+    # Build TLS block based on method
+    if tls_method == "http":
+        entry_points = ["web"]
+        tls_block = None
+    else:
+        entry_points = ["websecure"]
+        if tls_method == "selfsigned":
+            tls_block = {"secretName": "hermes-tls"}
+        else:  # letsencrypt
+            tls_block = {"certResolver": settings.tls_cert_resolver}
+
     body = {
         "apiVersion": "traefik.io/v1alpha1",
         "kind": "IngressRoute",
         "metadata": {"name": "vanity", "namespace": ns},
         "spec": {
-            "entryPoints": ["websecure"],
+            "entryPoints": entry_points,
             "routes": [
                 {
                     "match": f"Host(`{host}`)",
                     "kind": "Rule",
-                    "middlewares": [
-                        {"name": "friend-basic", "namespace": ns}
-                    ],
                     "services": [
                         {"name": "ttyd", "port": 7681}
                     ],
                 }
             ],
-            "tls": {"certResolver": settings.tls_cert_resolver},
         },
     }
+    if tls_block:
+        body["spec"]["tls"] = tls_block
+
     try:
         custom_api.create_namespaced_custom_object(
             group="traefik.io",

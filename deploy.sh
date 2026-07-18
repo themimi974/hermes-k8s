@@ -129,23 +129,26 @@ ask_nvidia_nim() {
     echo ""
 }
 
-# ── Docker ────────────────────────────────────────────────────
-install_docker() {
-    if command -v docker &>/dev/null; then
-        ok "Docker already installed: $(docker --version)"
+# ── Podman (daemonless — no conflict with k3s networking) ──────
+install_podman() {
+    if command -v podman &>/dev/null; then
+        ok "Podman already installed: $(podman --version)"
         return
     fi
-    info "Installing Docker..."
-    curl -fsSL https://get.docker.com | sh
-    systemctl enable --now docker
-    ok "Docker installed: $(docker --version)"
+    info "Installing podman..."
+    case "$OS_FAMILY" in
+        debian) apt-get update -qq && apt-get install -y -qq podman ;;
+        rhel)   dnf install -y -q podman ;;
+        arch)   pacman -S --noconfirm podman ;;
+    esac
+    ok "Podman installed: $(podman --version)"
 }
 
-check_compose() {
-    if docker compose version &>/dev/null; then
-        ok "Docker Compose: $(docker compose version --short)"
-    else
-        fail "Docker Compose not found"
+# ── Prevent Docker (conflicts with k3s networking) ────────────
+check_no_docker() {
+    if command -v docker &>/dev/null; then
+        warn "Docker detected — it conflicts with k3s networking (cni0 corruption)"
+        warn "Run 'systemctl disable --now docker docker.socket' if you see network issues"
     fi
 }
 
@@ -282,6 +285,16 @@ YAML
 NVIDIA_API_KEY=$NVIDIA_API_KEY
 ENVEOF
             ok "NVIDIA API key written to $hermes_home/.env"
+
+            # Also create litellm-credentials secret with the real key
+            # (so litellm pod gets it via envFrom)
+            if command -v kubectl &>/dev/null && kubectl get ns litellm &>/dev/null 2>&1; then
+                kubectl create secret generic litellm-credentials -n litellm \
+                    --from-literal=NVIDIA_API_KEY="$NVIDIA_API_KEY" \
+                    --from-literal=LITELLM_MASTER_KEY="sk-master-$(openssl rand -hex 24)" \
+                    --dry-run=client -o yaml | kubectl apply -f -
+                ok "litellm-credentials secret updated with NVIDIA key"
+            fi
         else
             warn "No NVIDIA API key — set it before running hermes:"
             echo -e "  ${GREEN}sudo hermes config set NVIDIA_API_KEY nvapi-your-key${NC}"
@@ -343,29 +356,33 @@ install_k3s() {
     ok "k3s installed"
 }
 
-# ── Build Images ──────────────────────────────────────────────
+# ── Build Images (podman → k3s containerd) ─────────────────────
 build_images() {
     if [ ! -f "$INSTALL_DIR/Dockerfile" ]; then
         fail "Dockerfile not found at $INSTALL_DIR — clone failed?"
     fi
 
     info "Building ttyd image..."
-    docker build -t localhost/hermes-friends/ttyd:latest "$INSTALL_DIR"
-    docker save localhost/hermes-friends/ttyd:latest | k3s ctr images import -
+    podman build -t localhost/hermes-friends/ttyd:latest "$INSTALL_DIR"
 
     info "Building dashboard-api image..."
-    docker build -t localhost/hermes-dashboard-api:latest "$INSTALL_DIR/dashboard/api"
-    docker save localhost/hermes-dashboard-api:latest | k3s ctr images import -
+    podman build -t localhost/hermes-dashboard-api:latest "$INSTALL_DIR/dashboard/api"
 
     info "Building dashboard-frontend image..."
-    docker build -t localhost/hermes-dashboard-frontend:latest "$INSTALL_DIR/dashboard/frontend"
-    docker save localhost/hermes-dashboard-frontend:latest | k3s ctr images import -
+    podman build -t localhost/hermes-dashboard-frontend:latest "$INSTALL_DIR/dashboard/frontend"
 
     info "Building litellm image..."
-    docker build -t localhost/hermes-litellm:latest "$INSTALL_DIR/litellm"
-    docker save localhost/hermes-litellm:latest | k3s ctr images import -
+    podman build -t localhost/hermes-litellm:latest "$INSTALL_DIR/litellm"
 
-    ok "All images built and imported"
+    ok "All images built"
+}
+
+import_to_k3s() {
+    info "Importing images into k3s containerd..."
+    for img in hermes-friends/ttyd hermes-dashboard-api hermes-dashboard-frontend hermes-litellm; do
+        podman save "localhost/$img:latest" | k3s ctr images import -
+    done
+    ok "All images imported to k3s"
 }
 
 # ── Main ──────────────────────────────────────────────────────
@@ -388,8 +405,8 @@ main() {
     ask_nvidia_nim
 
     install_git
-    install_docker
-    check_compose
+    install_podman
+    check_no_docker
 
     if [ "$USE_LOCAL_MODEL" = "yes" ]; then
         install_ollama
@@ -402,6 +419,7 @@ main() {
     clone_repo
     install_k3s
     build_images
+    import_to_k3s
     install_deploy_skill
 
     echo ""

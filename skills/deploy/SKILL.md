@@ -1,7 +1,7 @@
 ---
 name: hermes-k8s-deploy
 description: "Deploy and manage hermes-k8s — per-user isolated Hermes Agent subdomains with LiteLLM gateway and local LLM."
-version: 1.2.0
+version: 1.3.0
 author: hermes-k8s
 platforms: [linux]
 metadata:
@@ -35,13 +35,12 @@ When the user says "deploy hermes-k8s", follow these steps IN ORDER:
 ### Phase 1: Prerequisites Check
 
 1. **OS detection** — check `/etc/os-release`
-2. **Docker** — `docker --version`, install if missing
-3. **Docker Compose** — `docker compose version`
-4. **Git** — `git --version`
-5. **Disk** — need ≥15GB free
-6. **RAM** — need ≥4GB
-7. **Ollama** — `ollama --version`, install if missing
-8. **Qwen model** — `ollama pull qwen3.5:0.8b`
+2. **Podman** — `podman --version`, install if missing (NOT Docker — it conflicts with k3s networking)
+3. **Git** — `git --version`
+4. **Disk** — need ≥10GB free
+5. **RAM** — need ≥4GB
+6. **Ollama** — `ollama --version`, install if missing
+7. **Qwen model** — `ollama pull qwen3.5:0.8b`
 
 ### Phase 2: Configuration (ASK USER)
 
@@ -157,8 +156,8 @@ Ask for these values — NEVER hardcode or assume:
 ### Phase 3: Build & Deploy
 
 1. **Clone repo** — `git clone https://github.com/themimi974/hermes-k8s.git`
-2. **Build images** — podman/docker build 3 images
-3. **Import to k3s** — `docker save | k3s ctr images import`
+2. **Build images** — podman build 4 images (gateway, dashboard-api, dashboard-frontend, litellm)
+3. **Import to k3s** — `podman save | k3s ctr images import` for each image
 4. **Apply manifests with substitution** — use `scripts/apply-manifest.sh` to substitute `__DOMAIN__` and `__TLS__` in each manifest:
    ```bash
    DOMAIN="myserver.duckdns.org"   # or hermes.example.com, or 192.168.1.62
@@ -220,17 +219,20 @@ Store credentials in:
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| Pod `ErrImageNeverPull` | Image not in k3s | `docker save \| k3s ctr images import` |
+| Pod `ErrImageNeverPull` | Image not in k3s | `podman save \| k3s ctr images import` |
 | Pod `CrashLoopBackOff` | App error | `kubectl logs <pod>` |
 | TLS cert not issuing (Let's Encrypt) | DNS not propagating | Check Cloudflare, patch Traefik DNS |
 | Self-signed cert browser warning | Expected — CA not trusted | Install CA with `mkcert -install` or accept warning |
 | DuckDNS not resolving | IP not updated | Re-run `curl "https://www.duckdns.org/update?domains=...&token=...&ip=..."` |
-| LiteLLM 401 on health | No auth header | Add `Authorization: Bearer *** |
+| LiteLLM 401 on health | No auth header | Add `Authorization: Bearer ***` |
 | Dashboard 502 | API pod down | `kubectl rollout restart deployment dashboard-api -n dashboard` |
 | Disk full | Image/pod accumulation | `podman system prune -af` |
 | Friend pod Pending | PVC or image issue | Check PVC status, import image |
 | Traefik 502, `dial tcp ... no route to host` | kube-router netpol iptables blocking pod traffic | Add `--disable-network-policy` to k3s install; if already installed, reboot to clear stale rules |
-| Middleware "auth secret must be set" or "allowCrossNamespace is disabled" | `hermes-basic` middleware referenced but not defined | Single-node deploys: remove middleware references from IngressRoutes (no auth needed) |
+| cni0 missing / all pods broken networking | Docker iptables conflicting with k3s flannel | `systemctl disable --now docker docker.socket` then reboot — Docker must not run alongside k3s |
+| Middleware "auth secret must be set" or "allowCrossNamespace is disabled" | `hermes-basic` middleware referenced but not defined | Single-node deploys: no auth middleware needed (Traefik/network boundary is sufficient). For public deploys: create real htpasswd middleware in each namespace. |
+
+**Note on authentication:** This repo does NOT deploy auth middleware for single-node LAN use. Dashboard, LiteLLM, and gateway are accessible without authentication on the local network. This is a deliberate design choice — the network boundary (LAN + no port forwarding) is sufficient for a single friend group. For public-facing deploys, add per-namespace basicAuth middleware.
 
 ## File Locations
 

@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from database import init_db
+from config import settings
 from routers import health, friends, budget_groups, usage
 
 logging.basicConfig(
@@ -56,4 +57,14 @@ async def root():
         "service": "hermes-dashboard-api",
         "version": "2.0.0",
         "docs": "/docs",
+    }
+
+
+@app.get("/api/config")
+async def get_config():
+    """Return runtime config for the frontend (domain, TLS method)."""
+    return {
+        "domain": settings.friend_domain,
+        "tls_method": settings.tls_method,
+        "tls_cert_resolver": settings.tls_cert_resolver,
     }

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
+import { useConfig } from '../hooks/useConfig'
 
 const API_BASE = '/api'
 
@@ -22,6 +23,7 @@ function StatusBadge({ status }) {
 function FriendDetail() {
   const { name } = useParams()
   const navigate = useNavigate()
+  const { domain } = useConfig()
   const [friend, setFriend] = useState(null)
   const [snapshots, setSnapshots] = useState([])
   const [loading, setLoading] = useState(true)
@@ -147,12 +149,12 @@ function FriendDetail() {
             <StatusBadge status={friend.status} />
           </div>
           <a 
-            href={`https://${friend.name}.hermes.caron.fun`}
+            href={`https://${friend.name}.${domain}`}
             target="_blank"
             rel="noopener noreferrer"
             className="text-blue-400 hover:text-blue-300 underline"
           >
-            {friend.name}.hermes.caron.fun ↗
+            {friend.name}.{domain} ↗
           </a>
         </div>
 

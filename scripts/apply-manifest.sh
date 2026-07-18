@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# apply-manifest.sh — substitute __DOMAIN__ and __TLS__ in a manifest
-# then apply it via kubectl.
+# apply-manifest.sh — substitute __DOMAIN__, __TLS__, and __TLS_RESOLVER__
+# in a manifest, then apply it via kubectl.
 #
 # Usage: apply-manifest.sh <manifest> <domain> <tls_method>
 #   tls_method: letsencrypt | selfsigned | http
@@ -18,14 +18,17 @@ TLS_METHOD="${3:?Set tls_method: letsencrypt|selfsigned|http}"
 case "$TLS_METHOD" in
     letsencrypt)
         TLS_BLOCK="certResolver: cfresolver"
+        TLS_RESOLVER="cfresolver"
         ENTRYPOINTS="websecure"
         ;;
     selfsigned)
         TLS_BLOCK="secretName: hermes-tls"
+        TLS_RESOLVER="hermes-tls"
         ENTRYPOINTS="websecure"
         ;;
     http)
         TLS_BLOCK=""
+        TLS_RESOLVER=""
         ENTRYPOINTS="web"
         ;;
     *)
@@ -43,13 +46,13 @@ if [ "$TLS_METHOD" = "http" ]; then
     sed -e "s|__DOMAIN__|${DOMAIN}|g" \
         -e "s|entryPoints:.*\[websecure\]|entryPoints: [${ENTRYPOINTS}]|g" \
         -e '/^  tls:/{N;/__TLS__/d}' \
+        -e "s|__TLS_RESOLVER__|${TLS_RESOLVER}|g" \
         "$MANIFEST" > "$TMP"
 else
-    # For HTTPS: substitute domain + replace __TLS__ placeholder
-    # The __TLS__ placeholder sits under a "tls:" key — replace the
-    # placeholder line with the actual TLS config line.
+    # For HTTPS: substitute domain + replace __TLS__ and __TLS_RESOLVER__
     sed -e "s|__DOMAIN__|${DOMAIN}|g" \
         -e "s|__TLS__|${TLS_BLOCK}|g" \
+        -e "s|__TLS_RESOLVER__|${TLS_RESOLVER}|g" \
         "$MANIFEST" > "$TMP"
 fi
 
