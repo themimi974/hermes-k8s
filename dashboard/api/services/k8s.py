@@ -123,7 +123,11 @@ def get_pvc_status(ns: str, name: str = "friend-data") -> dict:
 
 
 def get_ingressroute_host(ns: str) -> Optional[str]:
-    """Get the host from the first IngressRoute in the namespace."""
+    """Get the host from the first IngressRoute in the namespace.
+
+    Falls back to constructing from settings.friend_domain if the
+    IngressRoute contains a placeholder or is missing.
+    """
     try:
         irs = custom_api.list_namespaced_custom_object(
             group="traefik.io",
@@ -137,13 +141,20 @@ def get_ingressroute_host(ns: str) -> Optional[str]:
             for route in routes:
                 match = route.get("match", "")
                 if "Host(" in match:
-                    # Extract host from Host(`xxx.hermes.caron.fun`)
                     import re
                     m = re.search(r"Host\(`([^`]+)`\)", match)
                     if m:
-                        return m.group(1)
+                        host = m.group(1)
+                        # Reject placeholder domains
+                        if host and "DOMAIN" not in host and "__" not in host:
+                            return host
     except Exception as e:
         logger.warning(f"Error getting IngressRoute for {ns}: {e}")
+
+    # Fallback: construct from settings.friend_domain
+    if settings.friend_domain:
+        friend_name = ns.replace("friend-", "")
+        return f"{friend_name}.{settings.friend_domain}"
     return None
 
 

@@ -1,4 +1,5 @@
 """Dashboard API configuration from environment variables."""
+from pydantic import validator
 from pydantic_settings import BaseSettings
 
 
@@ -27,6 +28,16 @@ class Settings(BaseSettings):
     friend_cpu_limit: str = "1"
     friend_memory_limit: str = "512Mi"
     friend_domain: str = ""
+
+    @validator("friend_domain")
+    def _check_domain(cls, v):
+        if v and ("DOMAIN" in v or "__" in v):
+            import logging
+            logging.getLogger("config").warning(
+                f"friend_domain looks like a placeholder: '{v}' — "
+                "friend subdomains will be wrong. Set FRIEND_DOMAIN env var."
+            )
+        return v
     tls_method: str = "selfsigned"  # letsencrypt | selfsigned | http
     tls_cert_resolver: str = ""     # cfresolver (letsencrypt) or hermes-tls (selfsigned)
 
