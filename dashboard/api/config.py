@@ -26,7 +26,8 @@ class Settings(BaseSettings):
     friend_memory_request: str = "256Mi"
     friend_cpu_limit: str = "1"
     friend_memory_limit: str = "512Mi"
-    friend_domain: str = "hermes.caron.fun"
+    friend_domain: str = ""
+    tls_cert_resolver: str = "cfresolver"
 
     @property
     def postgres_url(self) -> str:

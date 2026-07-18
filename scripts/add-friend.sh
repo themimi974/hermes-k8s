@@ -11,8 +11,17 @@ PASS="${3:?Usage: add-friend.sh <name> <username> <password>}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MANIFESTS="$SCRIPT_DIR/../manifests/_template"
 NS="friend-${NAME}"
-HOST="${NAME}.hermes.caron.fun"
+HOST="${NAME}.${DOMAIN:?Set DOMAIN env var (e.g. hermes.example.com)}"
+TLS_METHOD="${TLS_METHOD:?Set TLS_METHOD env var: letsencrypt|selfsigned|http}"
 KUBECTL="kubectl"
+
+# Resolve __TLS__ placeholder based on TLS method
+case "$TLS_METHOD" in
+    letsencrypt)  TLS_SUBST="certResolver: cfresolver" ;;
+    selfsigned)   TLS_SUBST="secretName: hermes-tls" ;;
+    http)         TLS_SUBST="" ;;
+    *)            echo "Unknown TLS_METHOD: $TLS_METHOD" >&2; exit 1 ;;
+esac
 
 # Generate htpasswd entry (APR1/MD5)
 B64USERS=$(htpasswd -nbm -c /dev/stdout "$USER" "$PASS" | base64 -w0)
@@ -21,10 +30,20 @@ B64USERS_NW=$(echo -n "${USER}:$(htpasswd -nbm /dev/stdout "$USER" "$PASS" | cut
 
 echo "→ Creating namespace $NS"
 for f in 00-namespace.yaml 01-data-pvc.yaml 02-htpasswd.yaml 03-middleware.yaml 04-deployment.yaml 05-service.yaml 06-ingressroute.yaml; do
-  sed -e "s|__NAME__|${NAME}|g" \
-      -e "s|__HOST__|${HOST}|g" \
-      -e "s|__B64USERS__|${B64USERS_NW}|g" \
-      "$MANIFESTS/$f" | $KUBECTL apply -f -
+  SED_ARGS=(
+      -e "s|__NAME__|${NAME}|g"
+      -e "s|__HOST__|${HOST}|g"
+      -e "s|__B64USERS__|${B64USERS_NW}|g"
+      -e "s|__TLS__|${TLS_SUBST}|g"
+  )
+  # For HTTP: also swap entryPoints and remove tls block
+  if [ "$TLS_METHOD" = "http" ]; then
+      SED_ARGS+=(
+          -e 's|entryPoints:.*\[websecure\]|entryPoints: [web]|g'
+          -e '/^  tls:/{N;/__TLS__/d}'
+      )
+  fi
+  sed "${SED_ARGS[@]}" "$MANIFESTS/$f" | $KUBECTL apply -f -
 done
 
 echo "→ Waiting for deployment rollout"

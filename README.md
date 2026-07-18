@@ -13,9 +13,9 @@ curl -fsSL https://raw.githubusercontent.com/themimi974/hermes-k8s/main/deploy.s
 ```
 
 This installs everything: Docker, Git, Ollama (optional), Hermes Agent, k3s, and the deployment skill. It will interactively ask you about:
-- Local model (Ollama + Qwen) or cloud (NVIDIA NIM — free)
-- DNS provider (Cloudflare, DuckDNS, or none)
-- TLS method (Let's Encrypt, self-signed, or HTTP)
+- Local model (Ollama + Qwen) or cloud (NVIDIA NIM — free tier, needs API key)
+
+DNS/domain/TLS is configured later, interactively, when you tell the running agent to **"deploy hermes-k8s"**.
 
 Once done, run `sudo hermes` and tell it: **"deploy hermes-k8s"**
 

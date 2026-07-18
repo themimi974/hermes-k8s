@@ -19,10 +19,6 @@ REPO_URL="https://github.com/themimi974/hermes-k8s.git"
 INSTALL_DIR="/opt/hermes-k8s"
 USE_LOCAL_MODEL=""
 USE_NIM=""
-TLS_METHOD=""
-DNS_PROVIDER=""
-DOMAIN=""
-DUCKDNS_TOKEN=""
 NVIDIA_API_KEY=""
 
 # ── OS Detection ──────────────────────────────────────────────
@@ -130,81 +126,6 @@ ask_nvidia_nim() {
             *) echo "  Please answer y or n" ;;
         esac
     done
-    echo ""
-}
-
-# ── Interactive: DNS & TLS ─────────────────────────────────────
-ask_dns_and_tls() {
-    echo ""
-    echo -e "${CYAN}╔══════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║  DNS & TLS Setup                                       ║${NC}"
-    echo -e "${CYAN}╚══════════════════════════════════════════════════════════╝${NC}"
-    echo ""
-    echo "  ${GREEN}1${NC} — Cloudflare (you have a domain + Cloudflare account)"
-    echo "  ${GREEN}2${NC} — DuckDNS (free, no domain needed — ${CYAN}https://www.duckdns.org${NC})"
-    echo "  ${GREEN}3${NC} — None / IP only (access via raw IP, no TLS)"
-    echo ""
-
-    while true; do
-        read -rp "$(echo -e "${CYAN}DNS provider? [1/2/3]: ${NC}")" dns_choice </dev/tty
-        case "$dns_choice" in
-            1) DNS_PROVIDER="cloudflare"; break ;;
-            2) DNS_PROVIDER="duckdns";   break ;;
-            3) DNS_PROVIDER="none";      break ;;
-            *) echo "  Please answer 1, 2, or 3" ;;
-        esac
-    done
-    echo ""
-
-    case "$DNS_PROVIDER" in
-        cloudflare)
-            echo -e "  ${GREEN}Cloudflare selected${NC} — you'll need:"
-            echo "    • A domain managed by Cloudflare"
-            echo "    • A Cloudflare API token (DNS edit permission)"
-            echo "    • An email for Let's Encrypt registration"
-            echo ""
-            read -rp "$(echo -e "${CYAN}Domain (e.g. hermes.example.com): ${NC}")" DOMAIN </dev/tty
-            read -rp "$(echo -e "${CYAN}Email for Let's Encrypt: ${NC}")" LE_EMAIL </dev/tty
-            read -rsp "$(echo -e "${CYAN}Cloudflare API token: ${NC}")" CF_TOKEN </dev/tty; echo
-            TLS_METHOD="letsencrypt"
-            ;;
-        duckdns)
-            echo -e "  ${GREEN}DuckDNS selected${NC} — free subdomain, self-signed certs"
-            echo "    1. Go to ${CYAN}https://www.duckdns.org${NC}"
-            echo "    2. Sign in with GitHub/Google"
-            echo "    3. Create a subdomain (e.g. 'myserver')"
-            echo ""
-            read -rp "$(echo -e "${CYAN}DuckDNS subdomain (without .duckdns.org): ${NC}")" DUCKDNS_SUB </dev/tty
-            DOMAIN="${DUCKDNS_SUB}.duckdns.org"
-            TLS_METHOD="selfsigned"
-            echo ""
-            echo -e "  ${YELLOW}Optional:${NC} DuckDNS token to auto-update your IP"
-            echo "  (skip if you'll set the IP manually in the DuckDNS dashboard)"
-            read -rp "$(echo -e "${CYAN}DuckDNS token (leave empty to skip): ${NC}")" DUCKDNS_TOKEN </dev/tty
-            ;;
-        none)
-            echo -e "  ${YELLOW}No DNS / IP only${NC} — self-signed certs or HTTP"
-            echo ""
-            while true; do
-                read -rp "$(echo -e "${CYAN}Use HTTPS (self-signed)? [Y/n]: ${NC}")" https_choice </dev/tty
-                case "${https_choice,,}" in
-                    y|yes|"") TLS_METHOD="selfsigned"; break ;;
-                    n|no)     TLS_METHOD="http";      break ;;
-                    *) echo "  Please answer y or n" ;;
-                esac
-            done
-            if [ "$TLS_METHOD" = "selfsigned" ]; then
-                read -rp "$(echo -e "${CYAN}Domain or IP (e.g. 192.168.1.62): ${NC}")" DOMAIN </dev/tty
-            fi
-            ;;
-    esac
-
-    echo ""
-    case "$TLS_METHOD" in
-        letsencrypt)  ok "TLS: Let's Encrypt via Cloudflare (trusted certs)" ;;
-        selfsigned)   ok "TLS: Self-signed (browser warning, install CA to dismiss)" ;;
-        http)         ok "TLS: None — HTTP only (no encryption)" ;;
-    esac
     echo ""
 }
 
@@ -455,10 +376,9 @@ main() {
     check_ram
     echo ""
 
-    # Ask user about local model and DNS/TLS BEFORE installing anything
+    # Ask user about model provider BEFORE installing anything
     ask_local_model
     ask_nvidia_nim
-    ask_dns_and_tls
 
     install_git
     install_docker

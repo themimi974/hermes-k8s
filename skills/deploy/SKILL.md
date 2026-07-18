@@ -137,10 +137,18 @@ Ask for these values — NEVER hardcode or assume:
 1. **Clone repo** — `git clone https://github.com/themimi974/hermes-k8s.git`
 2. **Build images** — podman/docker build 3 images
 3. **Import to k3s** — `docker save | k3s ctr images import`
-4. **Deploy manifests** — `kubectl apply -f dashboard/manifests/`
-5. **Deploy gateway** — `kubectl apply -f gateway/`
+4. **Apply manifests with substitution** — use `scripts/apply-manifest.sh` to substitute `__DOMAIN__` and `__TLS__` in each manifest:
+   ```bash
+   DOMAIN="myserver.duckdns.org"   # or hermes.example.com, or 192.168.1.62
+   TLS="selfsigned"                 # or letsencrypt, or http
+
+   bash scripts/apply-manifest.sh gateway/ingressroute.yaml "$DOMAIN" "$TLS"
+   bash scripts/apply-manifest.sh dashboard/manifests/50-ingressroute.yaml "$DOMAIN" "$TLS"
+   kubectl apply -f dashboard/manifests/  # non-templated manifests
+   ```
+5. **Deploy gateway** — `kubectl apply -f gateway/` (non-templated manifests like deployment, service, configmap)
 6. **Configure LiteLLM** — create/update ConfigMap
-7. **Configure TLS** — apply self-signed certs OR configure Let's Encrypt resolver
+7. **Configure TLS** — if self-signed: run `mkcert` + create `hermes-tls` secret (see Step 3 above)
 8. **Configure DNS** — if Cloudflare: guide through setup; if DuckDNS: update record with `curl`
 9. **Verify** — check all pods running, HTTPS working
 

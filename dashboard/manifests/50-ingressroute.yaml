@@ -7,7 +7,7 @@ spec:
   entryPoints:
     - websecure
   routes:
-    - match: Host(`dashboard.hermes.caron.fun`)
+    - match: Host(`dashboard.__DOMAIN__`)
       kind: Rule
       middlewares:
         - name: hermes-basic
@@ -16,4 +16,4 @@ spec:
         - name: dashboard-frontend
           port: 80
   tls:
-    certResolver: cfresolver
+    __TLS__

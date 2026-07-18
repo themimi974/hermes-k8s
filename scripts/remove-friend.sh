@@ -5,7 +5,7 @@ set -euo pipefail
 
 NAME="${1:?Usage: remove-friend.sh <name>}"
 NS="friend-${NAME}"
-HOST="${NAME}.hermes.caron.fun"
+HOST="${NAME}.${DOMAIN:?Set DOMAIN env var (e.g. hermes.example.com)}"
 
 echo "→ Deleting namespace $NS (cascading: svc, deploy, pvc, secret, middleware, ir)"
 kubectl delete namespace "$NS" --ignore-not-found --wait=true

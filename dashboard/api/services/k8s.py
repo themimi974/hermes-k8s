@@ -333,7 +333,7 @@ def create_ingressroute(ns: str, host: str) -> None:
                     ],
                 }
             ],
-            "tls": {"certResolver": "cfresolver"},
+            "tls": {"certResolver": settings.tls_cert_resolver},
         },
     }
     try:
