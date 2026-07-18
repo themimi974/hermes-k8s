@@ -24,6 +24,7 @@ hermes-k8s deploys:
 - **Dashboard** (FastAPI + React) for managing friends, groups, usage
 - **Friend pods** — isolated terminal shells via ttyd
 - **Ollama + Qwen 3.5** — local LLM inference (optional)
+- **NVIDIA NIM** — free cloud inference with `deepseek-ai/deepseek-v4-pro` (default when no local model)
 
 Each "friend" gets their own Kubernetes namespace, persistent storage, and a unique subdomain behind Traefik.
 
@@ -44,7 +45,24 @@ When the user says "deploy hermes-k8s", follow these steps IN ORDER:
 
 ### Phase 2: Configuration (ASK USER)
 
-#### Step 1: DNS Provider
+#### Step 1: Cloud Provider (if no local model)
+
+If user declined local model, ask about NVIDIA NIM:
+
+| Option | Description | Notes |
+|--------|-------------|-------|
+| **NVIDIA NIM** | Free cloud inference, no API key needed | Default model: `deepseek-ai/deepseek-v4-pro` (131k context) |
+| **Manual** | User will configure their own provider later | Skip — user runs `hermes setup` afterwards |
+
+**NVIDIA NIM config written to `~/.hermes/config.yaml`:**
+```yaml
+model:
+  default: deepseek-ai/deepseek-v4-pro
+  provider: nvidia
+  context_length: 131072
+```
+
+#### Step 2: DNS Provider
 
 Ask the user which DNS setup they have:
 
@@ -68,7 +86,7 @@ Ask the user which DNS setup they have:
 curl -s "https://www.duckdns.org/update?domains=<SUBDOMAIN>&token=<TOKEN>&ip=<SERVER_IP>"
 ```
 
-#### Step 2: TLS Method (based on DNS choice)
+#### Step 3: TLS Method (based on DNS choice)
 
 | DNS Provider | Recommended TLS | Why |
 |--------------|----------------|-----|
@@ -103,7 +121,7 @@ kubectl create secret tls hermes-tls \
 
 **If HTTP only:** use `entryPoints: [web]` in IngressRoutes, no TLS section.
 
-#### Step 3: Other Credentials
+#### Step 4: Other Credentials
 
 Ask for these values — NEVER hardcode or assume:
 
