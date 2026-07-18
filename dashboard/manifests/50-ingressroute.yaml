@@ -1,3 +1,4 @@
+# No auth middleware — single-node LAN deploy.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -9,9 +10,6 @@ spec:
   routes:
     - match: Host(`dashboard.__DOMAIN__`)
       kind: Rule
-      middlewares:
-        - name: hermes-basic
-          namespace: auth
       services:
         - name: dashboard-frontend
           port: 80

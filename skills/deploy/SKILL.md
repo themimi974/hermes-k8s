@@ -229,6 +229,8 @@ Store credentials in:
 | Dashboard 502 | API pod down | `kubectl rollout restart deployment dashboard-api -n dashboard` |
 | Disk full | Image/pod accumulation | `podman system prune -af` |
 | Friend pod Pending | PVC or image issue | Check PVC status, import image |
+| Traefik 502, `dial tcp ... no route to host` | kube-router netpol iptables blocking pod traffic | Add `--disable-network-policy` to k3s install; if already installed, reboot to clear stale rules |
+| Middleware "auth secret must be set" or "allowCrossNamespace is disabled" | `hermes-basic` middleware referenced but not defined | Single-node deploys: remove middleware references from IngressRoutes (no auth needed) |
 
 ## File Locations
 

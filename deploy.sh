@@ -334,7 +334,10 @@ install_k3s() {
         return
     fi
     info "Installing k3s..."
-    curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--write-kubeconfig-mode 0640" sh -
+    # --disable-network-policy: single-node deploys don't need kube-router netpol.
+    # Without this, kube-router programs iptables REJECT rules that block
+    # pod-to-pod traffic across namespaces, causing 502/no-route-to-host.
+    curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--write-kubeconfig-mode 0640 --disable-network-policy" sh -
     sleep 5
     kubectl wait --for=condition=ready node --all --timeout=120s
     ok "k3s installed"
