@@ -13,6 +13,7 @@ from models import (
     BudgetGroupRecord,
     FriendRecord,
 )
+from services import litellm_client
 
 router = APIRouter(prefix="/api/budget-groups", tags=["budget-groups"])
 
@@ -96,7 +97,10 @@ async def create_group(body: BudgetGroupCreate):
 
 @router.put("/{group_id}", response_model=BudgetGroupResponse)
 async def update_group(group_id: int, body: BudgetGroupUpdate):
-    """Update a budget group."""
+    """Update a budget group. Propagates model/limit changes to assigned friends."""
+    import logging
+    logger = logging.getLogger(__name__)
+
     db = SessionLocal()
     try:
         record = db.query(BudgetGroupRecord).filter(BudgetGroupRecord.id == group_id).first()
@@ -109,9 +113,32 @@ async def update_group(group_id: int, body: BudgetGroupUpdate):
 
         db.commit()
         db.refresh(record)
-        count = db.query(FriendRecord).filter(FriendRecord.budget_group_id == group_id).count()
+
+        # Propagate to assigned friends' LiteLLM keys
+        friends = db.query(FriendRecord).filter(FriendRecord.budget_group_id == group_id).all()
+        propagated = 0
+        for friend in friends:
+            if friend.litellm_key_hash:
+                try:
+                    await litellm_client.update_virtual_key(
+                        token=friend.litellm_key_hash,
+                        models=record.models,
+                        tpm_limit=record.tpm_limit,
+                        rpm_limit=record.rpm_limit,
+                        max_budget=record.max_budget,
+                        budget_duration=record.budget_duration,
+                    )
+                    propagated += 1
+                except Exception as e:
+                    logger.warning(f"Failed to update key for friend '{friend.name}': {e}")
+
+        count = len(friends)
+        msg = f"Budget group '{record.name}' updated"
+        if propagated:
+            msg += f" ({propagated}/{count} friends' keys updated)"
+
         return BudgetGroupResponse(
-            message=f"Budget group '{record.name}' updated",
+            message=msg,
             group=_record_to_info(record, count),
         )
     finally:

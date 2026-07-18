@@ -128,6 +128,57 @@ class BudgetGroupDeleteResponse(BaseModel):
     message: str
 
 
+# ── Model schemas ────────────────────────────────────────────────
+
+
+class ModelCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=128)
+    model_id: str = Field(..., min_length=1, max_length=256)
+    api_type: str = Field(default="openai", pattern=r"^(openai|anthropic)$")
+    api_key: str = ""
+    api_base: str = ""
+    context_length: int = 128000
+    max_tokens: int = 4096
+    enabled: bool = True
+
+
+class ModelUpdate(BaseModel):
+    name: Optional[str] = None
+    model_id: Optional[str] = None
+    api_type: Optional[str] = None
+    api_key: Optional[str] = None
+    api_base: Optional[str] = None
+    context_length: Optional[int] = None
+    max_tokens: Optional[int] = None
+    enabled: Optional[bool] = None
+
+
+class ModelInfo(BaseModel):
+    id: int
+    name: str
+    model_id: str
+    api_type: str
+    api_key: str
+    api_base: str
+    context_length: int
+    max_tokens: int
+    enabled: bool
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class ModelResponse(BaseModel):
+    message: str
+    model: ModelInfo
+
+
+class ModelTestResult(BaseModel):
+    model_id: str
+    success: bool
+    latency_ms: int = 0
+    error: Optional[str] = None
+
+
 # ── Usage schemas ──────────────────────────────────────────────────
 
 
@@ -177,5 +228,22 @@ class BudgetGroupRecord(Base):
     max_parallel = Column(Integer, default=5)
     max_budget = Column(Float, default=50.0)
     budget_duration = Column(String(8), default="30d")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+class ModelRecord(Base):
+    """LLM model configuration."""
+    __tablename__ = "models"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(128), unique=True, nullable=False)
+    model_id = Column(String(256), nullable=False)
+    api_type = Column(String(32), default="openai")
+    api_key = Column(String(512), default="")
+    api_base = Column(String(512), default="")
+    context_length = Column(Integer, default=128000)
+    max_tokens = Column(Integer, default=4096)
+    enabled = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

@@ -4,6 +4,7 @@ import FriendDetail from './pages/FriendDetail'
 import NewFriend from './pages/NewFriend'
 import BudgetGroups from './pages/BudgetGroups'
 import Usage from './pages/Usage'
+import Models from './pages/Models'
 
 function NavLink({ to, children }) {
   const location = useLocation()
@@ -34,6 +35,7 @@ function App() {
                 </Link>
                 <nav className="flex items-center space-x-1">
                   <NavLink to="/">Friends</NavLink>
+                  <NavLink to="/models">Models</NavLink>
                   <NavLink to="/budget-groups">Budget Groups</NavLink>
                   <NavLink to="/usage">Usage</NavLink>
                 </nav>
@@ -56,6 +58,7 @@ function App() {
             <Route path="/friends/new" element={<NewFriend />} />
             <Route path="/friends/:name" element={<FriendDetail />} />
             <Route path="/budget-groups" element={<BudgetGroups />} />
+            <Route path="/models" element={<Models />} />
             <Route path="/usage" element={<Usage />} />
           </Routes>
         </main>

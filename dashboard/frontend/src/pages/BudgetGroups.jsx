@@ -4,13 +4,14 @@ const API = '/api'
 
 export default function BudgetGroups() {
   const [groups, setGroups] = useState([])
+  const [availableModels, setAvailableModels] = useState([])
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
   const [editGroup, setEditGroup] = useState(null)
   const [form, setForm] = useState({
     name: '',
     description: '',
-    models: ['gpt-3.5-turbo'],
+    models: [],
     tpm_limit: 100000,
     rpm_limit: 1000,
     max_parallel: 5,
@@ -30,7 +31,17 @@ export default function BudgetGroups() {
     }
   }
 
-  useEffect(() => { fetchGroups() }, [])
+  const fetchModels = async () => {
+    try {
+      const res = await fetch(`${API}/models/`)
+      const data = await res.json()
+      setAvailableModels(Array.isArray(data) ? data.filter(m => m.enabled) : [])
+    } catch (e) {
+      console.error('Failed to fetch models:', e)
+    }
+  }
+
+  useEffect(() => { fetchGroups(); fetchModels() }, [])
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -78,7 +89,7 @@ export default function BudgetGroups() {
     setShowCreate(true)
   }
 
-  const modelOptions = ['gpt-3.5-turbo', 'gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'claude-3-sonnet', 'claude-3-haiku']
+  const modelOptions = availableModels.map(m => ({ id: m.model_id, name: m.name, context: m.context_length }))
 
   return (
     <div>
@@ -213,25 +224,30 @@ export default function BudgetGroups() {
               </div>
               <div>
                 <label className="block text-sm text-gray-300 mb-1">Models</label>
-                <div className="flex flex-wrap gap-2">
-                  {modelOptions.map((m) => (
-                    <label key={m} className="flex items-center gap-1 text-sm text-gray-300">
-                      <input
-                        type="checkbox"
-                        checked={form.models.includes(m)}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            setForm({ ...form, models: [...form.models, m] })
-                          } else {
-                            setForm({ ...form, models: form.models.filter((x) => x !== m) })
-                          }
-                        }}
-                        className="rounded"
-                      />
-                      {m}
-                    </label>
-                  ))}
-                </div>
+                {modelOptions.length === 0 ? (
+                  <p className="text-gray-500 text-sm">No models configured. <a href="/models" className="text-blue-400 hover:underline">Add models first</a>.</p>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {modelOptions.map((m) => (
+                      <label key={m.id} className="flex items-center gap-1 text-sm text-gray-300 bg-gray-700 rounded px-2 py-1">
+                        <input
+                          type="checkbox"
+                          checked={form.models.includes(m.id)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setForm({ ...form, models: [...form.models, m.id] })
+                            } else {
+                              setForm({ ...form, models: form.models.filter((x) => x !== m.id) })
+                            }
+                          }}
+                          className="rounded"
+                        />
+                        <span>{m.name}</span>
+                        <span className="text-gray-500 text-xs">({(m.context / 1000).toFixed(0)}k)</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
               </div>
               <div className="flex gap-3 pt-2">
                 <button
