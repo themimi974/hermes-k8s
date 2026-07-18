@@ -15,4 +15,8 @@ spec:
         - name: ttyd
           port: 7681
   tls:
-    certResolver: cfresolver
+    # __TLS__ is replaced during deploy based on TLS method:
+    #   Let's Encrypt → certResolver: cfresolver
+    #   Self-signed   → secretName: hermes-tls
+    #   HTTP only     → remove tls section + change entryPoints to [web]
+    __TLS__

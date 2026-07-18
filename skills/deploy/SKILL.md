@@ -1,7 +1,7 @@
 ---
 name: hermes-k8s-deploy
 description: "Deploy and manage hermes-k8s — per-user isolated Hermes Agent subdomains with LiteLLM gateway and local LLM."
-version: 1.0.0
+version: 1.1.0
 author: hermes-k8s
 platforms: [linux]
 metadata:
@@ -18,7 +18,7 @@ You are an infrastructure deployment agent. Your job is to deploy and manage the
 
 hermes-k8s deploys:
 - **k3s** single-node cluster
-- **Traefik** reverse proxy with Let's Encrypt wildcard TLS
+- **Traefik** reverse proxy with TLS (Let's Encrypt or self-signed)
 - **PostgreSQL** for dashboard and LiteLLM databases
 - **LiteLLM** API gateway with per-user virtual keys and budget controls
 - **Dashboard** (FastAPI + React) for managing friends, groups, usage
@@ -44,13 +44,71 @@ When the user says "deploy hermes-k8s", follow these steps IN ORDER:
 
 ### Phase 2: Configuration (ASK USER)
 
+#### Step 1: DNS Provider
+
+Ask the user which DNS setup they have:
+
+| Option | Description | TLS Method |
+|--------|-------------|------------|
+| **Cloudflare** | User has a domain managed by Cloudflare | Let's Encrypt via DNS-01 challenge (trusted certs) |
+| **DuckDNS** | User has no domain or no DNS provider — DuckDNS is free (`*.duckdns.org`) | Self-signed certs (browser warning, but works immediately) |
+| **None / IP only** | User wants to access via raw IP (e.g. `192.168.1.62`) | Self-signed certs or HTTP only |
+
+**Recommendation when user has no DNS provider:**
+> "If you don't have a domain or DNS provider, you can use **DuckDNS** — it's free and takes 2 minutes to set up. Go to https://www.duckdns.org, sign in with GitHub/Google, create a domain (e.g. `myserver.duckdns.org`), and give me the domain + your DuckDNS token."
+
+**DuckDNS subdomain flow:**
+- User picks a subdomain: `<name>.duckdns.org`
+- User gets a DuckDNS token from the website
+- The agent updates the DuckDNS record to point to the server's public IP
+- Self-signed certs are generated — no Let's Encrypt needed (DuckDNS doesn't support ACME DNS-01 wildcard)
+
+**DuckDNS update command (to set in cron or run once):**
+```bash
+curl -s "https://www.duckdns.org/update?domains=<SUBDOMAIN>&token=<TOKEN>&ip=<SERVER_IP>"
+```
+
+#### Step 2: TLS Method (based on DNS choice)
+
+| DNS Provider | Recommended TLS | Why |
+|--------------|----------------|-----|
+| Cloudflare | Let's Encrypt (DNS-01) | Proper trusted certs, wildcard support |
+| DuckDNS | Self-signed | DuckDNS doesn't support ACME DNS-01; self-signed works out of the box |
+| None | Self-signed or HTTP | No domain = no Let's Encrypt; self-signed if user wants HTTPS, HTTP if not |
+
+**If self-signed:** use `mkcert` (if available) or `openssl req -x509` to generate a CA + cert. Store as a k8s TLS secret (`hermes-tls`) and reference via `tls.secretName` in IngressRoutes instead of `certResolver`.
+
+**Self-signed cert generation (bash):**
+```bash
+# Install mkcert if available
+if ! command -v mkcert &>/dev/null; then
+  apt-get install -y mkcert 2>/dev/null || dnf install -y mkcert 2>/dev/null || (
+    curl -JLO "https://dl.filippo.io/mkcert/latest?for=linux/amd64" &&
+    chmod +x mkcert-linux-amd64 &&
+    mv mkcert-linux-amd64 /usr/local/bin/mkcert
+  )
+fi
+
+mkcert -install  # installs local CA (optional, removes browser warnings)
+mkcert "*.${DOMAIN}" "${DOMAIN}" "localhost" "127.0.0.1"
+
+# Create k8s TLS secret
+kubectl create secret tls hermes-tls \
+  --cert="*.${DOMAIN}"*pem \
+  --key="*.${DOMAIN}"*-key.pem \
+  -n traefik --dry-run=client -o yaml | kubectl apply -f -
+```
+
+**If Let's Encrypt (Cloudflare):** use `certResolver: cfresolver` as before (requires Cloudflare API token in Traefik static config).
+
+**If HTTP only:** use `entryPoints: [web]` in IngressRoutes, no TLS section.
+
+#### Step 3: Other Credentials
+
 Ask for these values — NEVER hardcode or assume:
 
 | Question | Default | Notes |
 |----------|---------|-------|
-| Domain name | — | e.g. `hermes.example.com` |
-| Email for Let's Encrypt | — | TLS cert registration |
-| Cloudflare API token | — | DNS-01 challenge |
 | PostgreSQL password | auto-generated | Can use `openssl rand -base64 24` |
 | LiteLLM master key | auto-generated | Format: `sk-master-...` |
 | OpenAI API key | optional | For GPT models |
@@ -64,8 +122,9 @@ Ask for these values — NEVER hardcode or assume:
 4. **Deploy manifests** — `kubectl apply -f dashboard/manifests/`
 5. **Deploy gateway** — `kubectl apply -f gateway/`
 6. **Configure LiteLLM** — create/update ConfigMap
-7. **Configure DNS** — guide user through Cloudflare setup
-8. **Verify** — check all pods running, HTTPS working
+7. **Configure TLS** — apply self-signed certs OR configure Let's Encrypt resolver
+8. **Configure DNS** — if Cloudflare: guide through setup; if DuckDNS: update record with `curl`
+9. **Verify** — check all pods running, HTTPS working
 
 ### Phase 4: Validation
 
@@ -84,6 +143,7 @@ Print summary:
 - LiteLLM URL
 - How to add friends
 - How to access the terminal
+- TLS method used and any caveats (e.g. "self-signed — browser will warn, install CA cert to dismiss")
 
 ## Credential Management
 
@@ -102,8 +162,10 @@ Store credentials in:
 |---------|-------|-----|
 | Pod `ErrImageNeverPull` | Image not in k3s | `docker save \| k3s ctr images import` |
 | Pod `CrashLoopBackOff` | App error | `kubectl logs <pod>` |
-| TLS cert not issuing | DNS not propagating | Check Cloudflare, patch Traefik DNS |
-| LiteLLM 401 on health | No auth header | Add `Authorization: Bearer <master_key>` |
+| TLS cert not issuing (Let's Encrypt) | DNS not propagating | Check Cloudflare, patch Traefik DNS |
+| Self-signed cert browser warning | Expected — CA not trusted | Install CA with `mkcert -install` or accept warning |
+| DuckDNS not resolving | IP not updated | Re-run `curl "https://www.duckdns.org/update?domains=...&token=...&ip=..."` |
+| LiteLLM 401 on health | No auth header | Add `Authorization: Bearer *** |
 | Dashboard 502 | API pod down | `kubectl rollout restart deployment dashboard-api -n dashboard` |
 | Disk full | Image/pod accumulation | `podman system prune -af` |
 | Friend pod Pending | PVC or image issue | Check PVC status, import image |
