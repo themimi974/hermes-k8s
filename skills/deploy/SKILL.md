@@ -51,7 +51,7 @@ If user declined local model, ask about NVIDIA NIM:
 
 | Option | Description | Notes |
 |--------|-------------|-------|
-| **NVIDIA NIM** | Free cloud inference, no API key needed | Default model: `deepseek-ai/deepseek-v4-pro` (131k context) |
+| **NVIDIA NIM** | Free cloud inference, needs free API key from build.nvidia.com | Default model: `deepseek-ai/deepseek-v4-pro` (131k context) |
 | **Manual** | User will configure their own provider later | Skip — user runs `hermes setup` afterwards |
 
 **NVIDIA NIM config written to `/root/.hermes/config.yaml`:**

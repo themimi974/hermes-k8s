@@ -23,6 +23,7 @@ TLS_METHOD=""
 DNS_PROVIDER=""
 DOMAIN=""
 DUCKDNS_TOKEN=""
+NVIDIA_API_KEY=""
 
 # ── OS Detection ──────────────────────────────────────────────
 detect_os() {
@@ -107,13 +108,24 @@ ask_nvidia_nim() {
     echo -e "${CYAN}║  Use NVIDIA NIM? (free cloud inference)                ║${NC}"
     echo -e "${CYAN}╚══════════════════════════════════════════════════════════╝${NC}"
     echo ""
-    echo "  ${GREEN}Yes${NC} — NVIDIA NIM (free, no credit card, default: deepseek-ai/deepseek-v4-pro)"
+    echo "  ${GREEN}Yes${NC} — NVIDIA NIM (free tier, default: deepseek-ai/deepseek-v4-pro)"
     echo "  ${YELLOW}No${NC}  — I'll configure my own provider later"
+    echo ""
+    echo -e "  ${CYAN}You'll need a free API key from https://build.nvidia.com${NC}"
+    echo -e "  (Sign up → Generate API Key → copy the nvapi-... value)"
     echo ""
     while true; do
         read -rp "$(echo -e "${CYAN}Use NVIDIA NIM? [Y/n]: ${NC}")" answer </dev/tty
         case "${answer,,}" in
-            y|yes|"") USE_NIM="yes"; break ;;
+            y|yes|"")
+                USE_NIM="yes"
+                echo ""
+                read -rp "$(echo -e "${CYAN}NVIDIA API key (nvapi-...): ${NC}")" NVIDIA_API_KEY </dev/tty
+                if [ -z "$NVIDIA_API_KEY" ]; then
+                    warn "No key provided — you'll need to set NVIDIA_API_KEY before running hermes"
+                fi
+                break
+                ;;
             n|no)     USE_NIM="no";  break ;;
             *) echo "  Please answer y or n" ;;
         esac
@@ -343,10 +355,19 @@ memory:
   user_profile_enabled: true
 YAML
 
+        # Write NVIDIA API key to .env
+        if [ -n "$NVIDIA_API_KEY" ]; then
+            cat > "$hermes_home/.env" << ENVEOF
+NVIDIA_API_KEY=$NVIDIA_API_KEY
+ENVEOF
+            ok "NVIDIA API key written to $hermes_home/.env"
+        else
+            warn "No NVIDIA API key — set it before running hermes:"
+            echo -e "  ${GREEN}sudo hermes config set NVIDIA_API_KEY nvapi-your-key${NC}"
+        fi
+
         ok "Hermes configured for NVIDIA NIM (deepseek-ai/deepseek-v4-pro)"
-        echo ""
-        echo -e "  ${CYAN}NVIDIA NIM is free — no API key needed.${NC}"
-        echo -e "  To change model later, run: ${GREEN}hermes model${NC}"
+        echo -e "  To change model later, run: ${GREEN}sudo hermes model${NC}"
         echo ""
 
     else
