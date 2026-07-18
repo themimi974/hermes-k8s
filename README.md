@@ -4,7 +4,24 @@ Per-user isolated Hermes Agent subdomains on a single node. Each friend gets the
 
 ## Quick Deploy
 
-**Requirements:** Linux (Ubuntu 22.04+, Debian 12+, Fedora 40+), Docker, 4GB RAM, 20GB disk.
+**Requirements:** Linux (Ubuntu 22.04+, Debian 12+, Fedora 40+), 4GB RAM, 20GB disk.
+
+### One-liner (recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/themimi974/hermes-k8s/main/deploy.sh | sudo bash
+```
+
+This installs everything: Docker, Git, Ollama (optional), Hermes Agent, k3s, and the deployment skill. It will interactively ask you about:
+- Local model (Ollama + Qwen) or cloud (NVIDIA NIM — free)
+- DNS provider (Cloudflare, DuckDNS, or none)
+- TLS method (Let's Encrypt, self-signed, or HTTP)
+
+Once done, run `hermes` and tell it: **"deploy hermes-k8s"**
+
+### Manual install
+
+If you prefer step-by-step:
 
 ```bash
 # 1. Install Docker (if not present)
@@ -13,7 +30,7 @@ curl -fsSL https://get.docker.com | sudo sh
 # 2. Clone the repo
 git clone https://github.com/themimi974/hermes-k8s.git && cd hermes-k8s
 
-# 3. Install Ollama + pull Qwen 3.5
+# 3. Install Ollama + pull Qwen 3.5 (optional — or use NVIDIA NIM)
 curl -fsSL https://ollama.com/install.sh | sh
 ollama pull qwen3.5:0.8b
 
