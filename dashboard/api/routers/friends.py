@@ -72,7 +72,7 @@ async def _update_friend_config(name: str, friend_record: FriendRecord):
         # Update ConfigMap with new model + key
         if friend_record.litellm_key:
             # Create ConfigMap if missing, then update
-            k8s.create_hermes_configmap(ns, default_model, friend_record.litellm_key)
+            k8s.create_hermes_configmap(ns, default_model, friend_record.litellm_key, merged["models"])
             # Create Secret if missing
             k8s.create_litellm_secret(ns, friend_record.litellm_key)
             # Ensure deployment has volume mounts

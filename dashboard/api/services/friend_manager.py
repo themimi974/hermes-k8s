@@ -106,7 +106,7 @@ def create_friend(name: str, username: str, password: str, litellm_key: Optional
     if litellm_key:
         # Default model is first in list — or gpt-3.5-turbo as fallback
         default_model = "gpt-3.5-turbo"
-        k8s.create_hermes_configmap(ns, default_model, litellm_key)
+        k8s.create_hermes_configmap(ns, default_model, litellm_key, [default_model])
         k8s.create_litellm_secret(ns, litellm_key)
         logger.info(f"  Created hermes config + LiteLLM secret")
 

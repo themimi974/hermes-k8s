@@ -241,14 +241,33 @@ def create_middleware(ns: str) -> None:
 # ── Hermes ConfigMap + Secret for friend pods ─────────────────────
 
 
-def _build_hermes_config(model_name: str, litellm_key: str) -> str:
-    """Build hermes config.yaml content pointing at LiteLLM."""
+def _build_hermes_config(model_name: str, litellm_key: str, all_models: list[str] = None) -> str:
+    """Build hermes config.yaml content pointing at LiteLLM.
+
+    Args:
+        model_name: Default model name
+        litellm_key: LiteLLM API key
+        all_models: List of all available model names (for custom_providers)
+    """
+    # Build models list for custom_providers
+    models_yaml = ""
+    if all_models and len(all_models) > 1:
+        models_list = "\n".join(f"      - {m}" for m in all_models)
+        models_yaml = f"""
+    models:
+{models_list}"""
+
     return f"""model:
   default: {model_name}
   provider: custom
   base_url: http://litellm.litellm.svc.cluster.local:4000/v1
   api_key: {litellm_key}
   context_length: 128000
+
+custom_providers:
+  - name: litellm
+    base_url: http://litellm.litellm.svc.cluster.local:4000/v1
+    api_key: {litellm_key}{models_yaml}
 
 agent:
   max_turns: 90
@@ -266,19 +285,19 @@ memory:
 """
 
 
-def create_hermes_configmap(ns: str, model_name: str, litellm_key: str) -> None:
+def create_hermes_configmap(ns: str, model_name: str, litellm_key: str, all_models: list[str] = None) -> None:
     """Write hermes config.yaml to the friend's PVC at /root/.hermes/.
 
     The PVC is mounted at /root/.hermes so the config is writable.
     We exec into a busybox pod to write the file.
     """
-    config_content = _build_hermes_config(model_name, litellm_key)
+    config_content = _build_hermes_config(model_name, litellm_key, all_models)
     _write_config_to_pvc(ns, config_content)
 
 
-def update_hermes_configmap(ns: str, model_name: str, litellm_key: str) -> None:
+def update_hermes_configmap(ns: str, model_name: str, litellm_key: str, all_models: list[str] = None) -> None:
     """Update hermes config.yaml in the friend's PVC."""
-    config_content = _build_hermes_config(model_name, litellm_key)
+    config_content = _build_hermes_config(model_name, litellm_key, all_models)
     _write_config_to_pvc(ns, config_content)
 
 

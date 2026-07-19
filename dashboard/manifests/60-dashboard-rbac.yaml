@@ -10,7 +10,7 @@ rules:
   # Apps API — deployments, replicasets
   - apiGroups: ["apps"]
     resources: ["deployments", "replicasets"]
-    verbs: ["get", "list", "watch", "create", "delete"]
+    verbs: ["get", "list", "watch", "create", "patch", "delete"]
   # Batch API — jobs (for restore)
   - apiGroups: ["batch"]
     resources: ["jobs"]
