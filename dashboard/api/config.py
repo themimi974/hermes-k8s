@@ -16,6 +16,13 @@ class Settings(BaseSettings):
     litellm_port: int = 4000
     litellm_master_key: str = ""
 
+    # MinIO
+    minio_endpoint: str = "minio.dashboard.svc.cluster.local:9000"
+    minio_access_key: str = ""
+    minio_secret_key: str = ""
+    minio_secure: bool = False
+    minio_bucket: str = "hermes-states"
+
     # Kubernetes
     k8s_incluster: bool = True
 

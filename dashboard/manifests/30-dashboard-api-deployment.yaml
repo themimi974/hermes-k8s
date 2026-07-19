@@ -49,6 +49,22 @@ spec:
                   name: litellm-credentials
                   key: LITELLM_MASTER_KEY
                   optional: true
+            - name: MINIO_ENDPOINT
+              value: "minio.dashboard.svc.cluster.local:9000"
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: MINIO_ROOT_USER
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: MINIO_ROOT_PASSWORD
+            - name: MINIO_SECURE
+              value: "false"
+            - name: MINIO_BUCKET
+              value: "hermes-states"
             - name: FRIEND_DOMAIN
               value: "__DOMAIN__"
             - name: TLS_CERT_RESOLVER
