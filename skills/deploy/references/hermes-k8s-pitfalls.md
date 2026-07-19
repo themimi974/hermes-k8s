@@ -651,6 +651,59 @@ kubectl exec -n dashboard deployment/postgresql -- psql -U "$PG_USER" -d litellm
 kubectl exec -n dashboard deployment/postgresql -- psql -U "$PG_USER" -d litellm_db -c "\d \"LiteLLM_SpendLogs\""  # list columns
 ```
 
+## Pitfall 30: LiteLLM ENTRYPOINT Double-Invocation (CRITICAL)
+
+`litellm/30-deployment.yaml` had `command: [litellm, --config, ...]` but the Dockerfile ENTRYPOINT is already `["litellm"]`. K8s `command` overrides ENTRYPOINT, so it becomes `litellm litellm --config ...` → crash loop.
+
+**Symptom:** LiteLLM pod in CrashLoopBackOff, logs show "Unknown command: litellm".
+
+**Fix:** Change `command` to `args` in `litellm/30-deployment.yaml`:
+```yaml
+# WRONG
+command:
+  - litellm
+  - --config
+  - /app/config/litellm_config.yaml
+
+# CORRECT — ENTRYPOINT is ["litellm"], so use args
+args:
+  - --config
+  - /app/config/litellm_config.yaml
+```
+
+## Pitfall 31: LiteLLM Dockerfile Missing libatomic1 (CRITICAL)
+
+Prisma runtime requires `libatomic.so.1` at migration time. The `python:3.11-slim` base image doesn't include it. Without it, `prisma migrate deploy` fails silently and LiteLLM starts without database tables.
+
+**Symptom:** LiteLLM starts but `litellm_db` has no tables. Usage tab shows "relation LiteLLM_SpendLogs does not exist".
+
+**Fix:** Add `libatomic1` to Dockerfile AND keep Node.js (Prisma needs it at runtime):
+```dockerfile
+RUN apt-get update && apt-get install -y curl libatomic1 && \
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y nodejs && \
+    rm -rf /var/lib/apt/lists/*
+# ... pip install, prisma generate ...
+# Do NOT remove nodejs — Prisma needs it for migrate deploy
+```
+
+**Memory warning:** Keeping Node.js increases image size. Ensure memory limit ≥ 2Gi.
+
+## Pitfall 32: litellm_db Must Be Created Before LiteLLM Starts
+
+LiteLLM config needs `database_url` pointing to `litellm_db`, but the database must exist FIRST. The deploy script creates PostgreSQL but not `litellm_db`.
+
+**Fix — add to deploy.sh after PostgreSQL is running:**
+```bash
+kubectl exec -n dashboard deployment/postgresql -- \
+  psql -U "$PG_USER" -d hermes_dashboard -c "CREATE DATABASE litellm_db;"
+```
+
+**Verify:**
+```bash
+kubectl exec -n dashboard deployment/postgresql -- psql -U "$PG_USER" -d litellm_db -c "\dt"
+```
+
 ## Reference Files
 
 - `references/deployment-checklist.md` — Quick-reference post-deploy verification checklist

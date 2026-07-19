@@ -1,7 +1,7 @@
 ---
 name: hermes-k8s-deploy
 description: "Deploy and manage hermes-k8s — per-user isolated Hermes Agent subdomains with LiteLLM gateway and local LLM."
-version: 1.8.0
+version: 1.9.0
 author: hermes-k8s
 platforms: [linux]
 metadata:
@@ -198,7 +198,12 @@ Ask for these values — NEVER hardcode or assume:
 
    bash scripts/apply-manifest.sh gateway/ingressroute.yaml "$DOMAIN" "$TLS"
    bash scripts/apply-manifest.sh dashboard/manifests/50-ingressroute.yaml "$DOMAIN" "$TLS"
-   kubectl apply -f dashboard/manifests/  # all non-templated manifests (namespace, postgres, frontend, RBAC)
+
+   # Substitute DOMAIN + __TLS_RESOLVER__ in dashboard-api deployment
+   bash scripts/apply-manifest.sh dashboard-api "$DOMAIN" "$TLS"
+
+   # Apply remaining non-templated dashboard manifests (namespace, postgres, frontend, RBAC, litellm deployment)
+   kubectl apply -f dashboard/manifests/
    ```
 5. **Deploy gateway** — `kubectl apply -f gateway/` (non-templated manifests like deployment, service, configmap)
 6. **Configure LiteLLM** — create/update ConfigMap
@@ -300,6 +305,10 @@ Store credentials in:
 | Usage tab shows "unknown" for all friends | Virtual keys missing `key_alias` field | Set `key_alias=friend_name` when creating keys. See Pitfall 28. |
 | Usage tab: "By Model" shows nothing | SQL query uses `s.` prefix without JOIN alias | Remove `s.` prefix for single-table queries. Fixed in v1.8.0. |
 | Matrix tab shows only total tokens | Frontend not rendering input/output/cached breakdown | Rebuild frontend after v1.8.0 — matrix now shows ↓output ↑input and ⚡cache_hit%. |
+| LiteLLM CrashLoopBackOff, "Unknown command: litellm" | K8s `command` field overrides Dockerfile ENTRYPOINT, doubling `litellm` | Change `command` to `args` in `litellm/30-deployment.yaml`. See Pitfall 30. |
+| LiteLLM starts but litellm_db has no tables | Prisma missing `libatomic1` — `prisma migrate deploy` fails silently | Add `libatomic1` to Dockerfile + keep Node.js. See Pitfall 31. |
+| LiteLLM config needs `litellm_db` but database doesn't exist | Deploy script creates PostgreSQL but not `litellm_db` | Run `CREATE DATABASE litellm_db;` after PostgreSQL starts. See Pitfall 32. |
+| Friend pod shows `DOMAIN` or `__TLS_RESOLVER__` in host | Dashboard-api env vars not substituted during deploy | Use `bash scripts/apply-manifest.sh dashboard-api "$DOMAIN" "$TLS"` |
 
 **Note on authentication:** This repo does NOT deploy auth middleware for single-node LAN use. Dashboard, LiteLLM, and gateway are accessible without authentication on the local network. This is a deliberate design choice — the network boundary (LAN + no port forwarding) is sufficient for a single friend group. For public-facing deploys, add per-namespace basicAuth middleware.
 

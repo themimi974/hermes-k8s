@@ -21,8 +21,8 @@ spec:
           imagePullPolicy: Never
           ports:
             - containerPort: 4000
-          command:
-            - litellm
+          # ENTRYPOINT is ["litellm"] in the Dockerfile — use args, not command
+          args:
             - --config
             - /app/config/litellm_config.yaml
             - --port
@@ -39,10 +39,10 @@ spec:
           resources:
             requests:
               cpu: 250m
-              memory: 256Mi
+              memory: 512Mi
             limits:
               cpu: "1"
-              memory: 512Mi
+              memory: 2Gi    # Prisma + Node.js needs more
           readinessProbe:
             tcpSocket:
               port: 4000
