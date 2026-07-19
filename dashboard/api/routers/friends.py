@@ -20,7 +20,7 @@ from models import (
     GroupAssignment,
     ResourceUpdate,
 )
-from services import friend_manager, litellm_client
+from services import friend_manager, litellm_client, k8s
 from services.merge import merge_groups, get_friend_merged_settings
 from database import SessionLocal
 
@@ -54,6 +54,30 @@ def _enrich_friend(info: FriendInfo) -> FriendInfo:
         db.close()
 
 
+async def _update_friend_config(name: str, friend_record: FriendRecord):
+    """Update hermes config ConfigMap + restart pod after group/key changes.
+
+    Recomputes the merged model list from assigned groups and updates
+    the ConfigMap so Hermes points at the correct default model.
+    """
+    ns = f"friend-{name}"
+    try:
+        groups = friend_record.groups
+        merged = merge_groups(groups) if groups else merge_groups([])
+
+        # First model in merged list becomes the default
+        default_model = merged["models"][0] if merged["models"] else "gpt-3.5-turbo"
+
+        # Update ConfigMap with new model + key
+        if friend_record.litellm_key:
+            k8s.update_hermes_configmap(ns, default_model, friend_record.litellm_key)
+            # Restart pod to pick up changes
+            k8s.restart_deployment(ns)
+            logger.info(f"Updated hermes config + restarted pod for '{name}' (model: {default_model})")
+    except Exception as e:
+        logger.warning(f"Failed to update config for '{name}': {e}")
+
+
 @router.get("/friends", response_model=list[FriendInfo])
 async def list_friends():
     """List all friend namespaces with status."""
@@ -72,30 +96,31 @@ async def get_friend(name: str):
 
 @router.post("/friends", response_model=CreateResponse, status_code=201)
 async def create_friend(body: FriendCreate):
-    """Create a new friend — provisions namespace, PVC, deployment, and LiteLLM key."""
+    """Create a new friend — provisions namespace, PVC, deployment, and LiteLLM key.
+
+    Creates hermes config ConfigMap + Secret so the friend pod uses LiteLLM.
+    """
     existing = friend_manager.get_friend_info(body.name)
     if existing is not None:
         raise HTTPException(status_code=409, detail=f"Friend '{body.name}' already exists")
 
-    try:
-        info = friend_manager.create_friend(body.name, body.username, body.password)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to create friend: {e}")
-
-    # Create LiteLLM virtual key with default settings (no group yet)
+    # 1. Create DB record first
     db = SessionLocal()
     try:
-        record = db.query(FriendRecord).filter(FriendRecord.name == body.name).first()
-        if not record:
-            record = FriendRecord(
-                name=body.name,
-                username=body.username,
-                namespace=f"friend-{body.name}",
-            )
-            db.add(record)
-            db.commit()
-            db.refresh(record)
+        record = FriendRecord(
+            name=body.name,
+            username=body.username,
+            namespace=f"friend-{body.name}",
+        )
+        db.add(record)
+        db.commit()
+        db.refresh(record)
+    finally:
+        db.close()
 
+    # 2. Create LiteLLM virtual key
+    litellm_key = None
+    try:
         key_data = await litellm_client.create_virtual_key(
             friend_name=body.name,
             models=["gpt-3.5-turbo"],
@@ -104,15 +129,40 @@ async def create_friend(body: FriendCreate):
             max_budget=50.0,
             budget_duration="30d",
         )
+        litellm_key = key_data["key"]
 
-        record.litellm_key = key_data["key"]
-        record.litellm_key_hash = key_data["key_hash"]
-        db.commit()
+        # Store key in DB
+        db = SessionLocal()
+        try:
+            record = db.query(FriendRecord).filter(FriendRecord.name == body.name).first()
+            if record:
+                record.litellm_key = key_data["key"]
+                record.litellm_key_hash = key_data["key_hash"]
+                db.commit()
+        finally:
+            db.close()
+
         logger.info(f"Created LiteLLM key for friend '{body.name}'")
     except Exception as e:
         logger.warning(f"Failed to create LiteLLM key for '{body.name}': {e}")
-    finally:
-        db.close()
+
+    # 3. Create k8s resources (with LiteLLM config if key was created)
+    try:
+        info = friend_manager.create_friend(
+            body.name, body.username, body.password,
+            litellm_key=litellm_key,
+        )
+    except Exception as e:
+        # Clean up DB record on failure
+        db = SessionLocal()
+        try:
+            record = db.query(FriendRecord).filter(FriendRecord.name == body.name).first()
+            if record:
+                db.delete(record)
+                db.commit()
+        finally:
+            db.close()
+        raise HTTPException(status_code=500, detail=f"Failed to create friend: {e}")
 
     return CreateResponse(
         message=f"Friend '{body.name}' created successfully",
@@ -166,13 +216,13 @@ async def delete_friend(name: str):
 async def assign_groups(name: str, body: GroupAssignment):
     """Assign a friend to one or more budget groups (replaces current assignments).
 
-    Merges settings across all assigned groups and updates the LiteLLM key.
+    Merges settings across all assigned groups, updates the LiteLLM key,
+    and refreshes the hermes config in the friend pod.
     """
     db = SessionLocal()
     try:
         friend = db.query(FriendRecord).filter(FriendRecord.name == name).first()
         if not friend:
-            # Create DB record if friend exists in k8s but not in DB
             friend = FriendRecord(name=name, username=name, namespace=f"friend-{name}")
             db.add(friend)
             db.flush()
@@ -188,6 +238,7 @@ async def assign_groups(name: str, body: GroupAssignment):
         # Replace assignments via junction table
         friend.groups = groups
         db.commit()
+        db.refresh(friend)
 
         # Merge settings and update LiteLLM key
         merged = merge_groups(groups)
@@ -201,6 +252,9 @@ async def assign_groups(name: str, body: GroupAssignment):
                 budget_duration=merged["budget_duration"],
             )
             logger.info(f"Updated LiteLLM key for '{name}' with {len(groups)} groups")
+
+            # Update hermes config + restart pod
+            await _update_friend_config(name, friend)
 
         group_names = [g.name for g in groups]
         return {
@@ -231,6 +285,7 @@ async def add_group(name: str, group_id: int):
         if group not in friend.groups:
             friend.groups.append(group)
             db.commit()
+            db.refresh(friend)
 
         # Re-merge and update LiteLLM key
         merged = merge_groups(friend.groups)
@@ -243,6 +298,8 @@ async def add_group(name: str, group_id: int):
                 max_budget=merged["max_budget"],
                 budget_duration=merged["budget_duration"],
             )
+            # Update hermes config + restart pod
+            await _update_friend_config(name, friend)
 
         return {
             "message": f"Added group '{group.name}' to friend '{name}'",
@@ -269,6 +326,7 @@ async def remove_group(name: str, group_id: int):
         if group in friend.groups:
             friend.groups.remove(group)
             db.commit()
+            db.refresh(friend)
 
         # Re-merge and update LiteLLM key
         merged = merge_groups(friend.groups)
@@ -281,6 +339,8 @@ async def remove_group(name: str, group_id: int):
                 max_budget=merged["max_budget"],
                 budget_duration=merged["budget_duration"],
             )
+            # Update hermes config + restart pod
+            await _update_friend_config(name, friend)
 
         return {
             "message": f"Removed group '{group.name}' from friend '{name}'",

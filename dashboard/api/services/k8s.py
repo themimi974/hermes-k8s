@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import logging
 from typing import Optional
-
 from kubernetes import client, config as k8s_config
 
 from config import settings
@@ -239,9 +238,182 @@ def create_middleware(ns: str) -> None:
             raise
 
 
-def create_deployment(ns: str) -> None:
-    """Create the ttyd deployment."""
+# ── Hermes ConfigMap + Secret for friend pods ─────────────────────
+
+
+def _build_hermes_config(model_name: str, litellm_key: str) -> str:
+    """Build hermes config.yaml content pointing at LiteLLM."""
+    return f"""model:
+  default: {model_name}
+  provider: custom
+  base_url: http://litellm.litellm.svc.cluster.local:4000/v1
+  api_key: {litellm_key}
+  context_length: 128000
+
+agent:
+  max_turns: 90
+
+terminal:
+  backend: ssh
+  timeout: 300
+
+compression:
+  enabled: true
+
+memory:
+  memory_enabled: true
+  user_profile_enabled: true
+"""
+
+
+def create_hermes_configmap(ns: str, model_name: str, litellm_key: str) -> None:
+    """Create ConfigMap containing hermes config.yaml pointing at LiteLLM.
+
+    The config mounts into the friend pod at /root/.hermes/config.yaml
+    so Hermes uses the friend's LiteLLM key instead of direct API access.
+    """
+    config_content = _build_hermes_config(model_name, litellm_key)
+    body = client.V1ConfigMap(
+        metadata=client.V1ObjectMeta(name="hermes-config", namespace=ns),
+        data={"config.yaml": config_content},
+    )
+    try:
+        v1.create_namespaced_config_map(namespace=ns, body=body)
+        logger.info(f"Created hermes-config ConfigMap in {ns}")
+    except client.exceptions.ApiException as e:
+        if e.status == 409:
+            # Already exists — update it
+            update_hermes_configmap(ns, model_name, litellm_key)
+        else:
+            raise
+
+
+def update_hermes_configmap(ns: str, model_name: str, litellm_key: str) -> None:
+    """Update existing hermes-config ConfigMap with new settings."""
+    config_content = _build_hermes_config(model_name, litellm_key)
+    body = {"data": {"config.yaml": config_content}}
+    try:
+        v1.patch_namespaced_config_map(name="hermes-config", namespace=ns, body=body)
+        logger.info(f"Updated hermes-config ConfigMap in {ns}")
+    except client.exceptions.ApiException as e:
+        if e.status == 404:
+            # Doesn't exist — create it
+            create_hermes_configmap(ns, model_name, litellm_key)
+        else:
+            raise
+
+
+def create_litellm_secret(ns: str, litellm_key: str) -> None:
+    """Create Secret containing the friend's LiteLLM API key.
+
+    Exposed as LITELLM_API_KEY env var in the friend pod.
+    """
+    import base64
+    body = client.V1Secret(
+        metadata=client.V1ObjectMeta(name="friend-litellm-key", namespace=ns),
+        type="Opaque",
+        data={"LITELLM_API_KEY": base64.b64encode(litellm_key.encode()).decode()},
+    )
+    try:
+        v1.create_namespaced_secret(namespace=ns, body=body)
+        logger.info(f"Created friend-litellm-key Secret in {ns}")
+    except client.exceptions.ApiException as e:
+        if e.status == 409:
+            # Already exists — patch it
+            patch_body = {"data": {"LITELLM_API_KEY": base64.b64encode(litellm_key.encode()).decode()}}
+            v1.patch_namespaced_secret(name="friend-litellm-key", namespace=ns, body=patch_body)
+            logger.info(f"Updated friend-litellm-key Secret in {ns}")
+        else:
+            raise
+
+
+def restart_deployment(ns: str, name: str = "ttyd") -> None:
+    """Trigger a rolling restart of a deployment by updating pod template annotation.
+
+    This forces pods to be recreated, picking up ConfigMap/Secret changes.
+    """
+    import datetime
+    body = {
+        "spec": {
+            "template": {
+                "metadata": {
+                    "annotations": {
+                        "hermes/restartedAt": datetime.datetime.utcnow().isoformat()
+                    }
+                }
+            }
+        }
+    }
+    try:
+        apps_v1.patch_namespaced_deployment(name=name, namespace=ns, body=body)
+        logger.info(f"Restarted deployment {name} in {ns}")
+    except client.exceptions.ApiException as e:
+        logger.warning(f"Failed to restart deployment {name} in {ns}: {e}")
+
+
+# ── Deployment with config mounts ────────────────────────────────
+
+
+def create_deployment(ns: str, litellm_key: Optional[str] = None) -> None:
+    """Create the ttyd deployment with Hermes config mounted.
+
+    If litellm_key is provided, mounts hermes config pointing at LiteLLM.
+    Otherwise, creates a plain deployment (no API access configured).
+    """
     labels = {"app": "ttyd", "friend": ns.replace("friend-", "")}
+
+    # Base volumes: PVC for friend data
+    volumes = [
+        client.V1Volume(
+            name="friends-data",
+            persistent_volume_claim=client.V1PersistentVolumeClaimVolumeSource(
+                claim_name="friend-data",
+            ),
+        ),
+    ]
+
+    # Base volume mounts
+    volume_mounts = [
+        client.V1VolumeMount(
+            name="friends-data",
+            mount_path="/opt/data",
+        ),
+    ]
+
+    # Env vars
+    env_vars = []
+
+    if litellm_key:
+        # Add hermes config ConfigMap volume
+        volumes.append(
+            client.V1Volume(
+                name="hermes-config",
+                config_map=client.V1ConfigMapVolumeSource(
+                    name="hermes-config",
+                ),
+            )
+        )
+        volume_mounts.append(
+            client.V1VolumeMount(
+                name="hermes-config",
+                mount_path="/root/.hermes",
+                read_only=True,
+            ),
+        )
+
+        # Add LiteLLM key from Secret
+        env_vars.append(
+            client.V1EnvVar(
+                name="LITELLM_API_KEY",
+                value_from=client.V1EnvVarSource(
+                    secret_key_ref=client.V1SecretKeySelector(
+                        name="friend-litellm-key",
+                        key="LITELLM_API_KEY",
+                    )
+                ),
+            )
+        )
+
     body = client.V1Deployment(
         metadata=client.V1ObjectMeta(name="ttyd", namespace=ns, labels=labels),
         spec=client.V1DeploymentSpec(
@@ -277,22 +449,11 @@ def create_deployment(ns: str) -> None:
                                     "memory": settings.friend_memory_limit,
                                 },
                             ),
-                            volume_mounts=[
-                                client.V1VolumeMount(
-                                    name="friends-data",
-                                    mount_path="/opt/data",
-                                )
-                            ],
+                            volume_mounts=volume_mounts,
+                            env=env_vars if env_vars else None,
                         )
                     ],
-                    volumes=[
-                        client.V1Volume(
-                            name="friends-data",
-                            persistent_volume_claim=client.V1PersistentVolumeClaimVolumeSource(
-                                claim_name="friend-data",
-                            ),
-                        )
-                    ],
+                    volumes=volumes,
                 ),
             ),
         ),

@@ -70,8 +70,12 @@ def list_friends() -> list[FriendInfo]:
     return friends
 
 
-def create_friend(name: str, username: str, password: str) -> FriendDetail:
-    """Create a new friend — mirrors add-friend.sh logic."""
+def create_friend(name: str, username: str, password: str, litellm_key: Optional[str] = None) -> FriendDetail:
+    """Create a new friend — mirrors add-friend.sh logic.
+
+    If litellm_key is provided, creates hermes config ConfigMap + Secret
+    and mounts them into the deployment so Hermes uses LiteLLM.
+    """
     ns = f"friend-{name}"
     host = f"{name}.{settings.friend_domain}"
 
@@ -98,15 +102,23 @@ def create_friend(name: str, username: str, password: str) -> FriendDetail:
     k8s.create_middleware(ns)
     logger.info(f"  Created Traefik Middleware")
 
-    # 6. Deployment
-    k8s.create_deployment(ns)
+    # 6. Hermes config + LiteLLM key (if provided)
+    if litellm_key:
+        # Default model is first in list — or gpt-3.5-turbo as fallback
+        default_model = "gpt-3.5-turbo"
+        k8s.create_hermes_configmap(ns, default_model, litellm_key)
+        k8s.create_litellm_secret(ns, litellm_key)
+        logger.info(f"  Created hermes config + LiteLLM secret")
+
+    # 7. Deployment (with config mounts if litellm_key provided)
+    k8s.create_deployment(ns, litellm_key=litellm_key)
     logger.info(f"  Created ttyd Deployment")
 
-    # 7. Service
+    # 8. Service
     k8s.create_service(ns)
     logger.info(f"  Created ttyd Service")
 
-    # 8. IngressRoute
+    # 9. IngressRoute
     k8s.create_ingressroute(ns, host)
     logger.info(f"  Created IngressRoute ({host})")
 

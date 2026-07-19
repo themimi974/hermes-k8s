@@ -14,7 +14,7 @@ from models import (
     BudgetGroupRecord,
     FriendRecord,
 )
-from services import litellm_client
+from services import litellm_client, k8s
 from services.merge import merge_groups
 
 logger = logging.getLogger(__name__)
@@ -61,6 +61,7 @@ async def _propagate_to_friends(db, group: BudgetGroupRecord):
 
     Each friend may belong to multiple groups, so we recompute their
     merged settings from ALL their assigned groups (not just this one).
+    Also updates hermes config ConfigMap + restarts pods.
     """
     friends = _get_friends_in_group(db, group.id)
     propagated = 0
@@ -76,9 +77,14 @@ async def _propagate_to_friends(db, group: BudgetGroupRecord):
                     max_budget=merged["max_budget"],
                     budget_duration=merged["budget_duration"],
                 )
+                # Update hermes config + restart pod
+                ns = f"friend-{friend.name}"
+                default_model = merged["models"][0] if merged["models"] else "gpt-3.5-turbo"
+                k8s.update_hermes_configmap(ns, default_model, friend.litellm_key)
+                k8s.restart_deployment(ns)
                 propagated += 1
             except Exception as e:
-                logger.warning(f"Failed to update key for friend '{friend.name}': {e}")
+                logger.warning(f"Failed to update key/config for friend '{friend.name}': {e}")
     return propagated, len(friends)
 
 
@@ -199,8 +205,13 @@ async def delete_group(group_id: int):
                         max_budget=merged["max_budget"],
                         budget_duration=merged["budget_duration"],
                     )
+                    # Update hermes config + restart pod
+                    ns = f"friend-{friend.name}"
+                    default_model = merged["models"][0] if merged["models"] else "gpt-3.5-turbo"
+                    k8s.update_hermes_configmap(ns, default_model, friend.litellm_key)
+                    k8s.restart_deployment(ns)
                 except Exception as e:
-                    logger.warning(f"Failed to update key for friend '{friend.name}' after group deletion: {e}")
+                    logger.warning(f"Failed to update key/config for friend '{friend.name}' after group deletion: {e}")
 
         return BudgetGroupDeleteResponse(
             message=f"Budget group '{record.name}' deleted (updated {len(affected_friends)} friends)"
