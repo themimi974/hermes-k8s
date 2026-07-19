@@ -1,6 +1,6 @@
 # hermes-k8s
 
-Per-user isolated Hermes Agent subdomains on a single node. Each friend gets their own terminal shell behind `<friend>.domain.com`, with a central dashboard, LiteLLM gateway, and optional local LLM.
+Per-user isolated Hermes Agent subdomains on a single node. Each friend gets their own terminal shell behind `<friend>.domain.com`, with a central dashboard, LiteLLM gateway, and per-friend dynamic configuration.
 
 ## Quick Deploy
 
@@ -12,7 +12,7 @@ Per-user isolated Hermes Agent subdomains on a single node. Each friend gets the
 curl -fsSL https://raw.githubusercontent.com/themimi974/hermes-k8s/main/deploy.sh | sudo bash
 ```
 
-This installs everything: Docker, Git, Ollama (optional), Hermes Agent, k3s, and the deployment skill. It will interactively ask you about:
+This installs everything: Podman, Git, Hermes Agent, k3s, and the deployment skill. It will interactively ask you about:
 - Local model (Ollama + Qwen) or cloud (NVIDIA NIM — free tier, needs API key)
 
 DNS/domain/TLS is configured later, interactively, when you tell the running agent to **"deploy hermes-k8s"**.
@@ -26,24 +26,20 @@ Once done, run `sudo hermes` and tell it: **"deploy hermes-k8s"**
 If you prefer step-by-step:
 
 ```bash
-# 1. Install Docker (if not present)
-curl -fsSL https://get.docker.com | sudo sh
+# 1. Install Podman (if not present — NOT Docker, it conflicts with k3s)
+sudo dnf install -y podman  # or: sudo apt-get install -y podman
 
 # 2. Clone the repo
 git clone https://github.com/themimi974/hermes-k8s.git && cd hermes-k8s
 
-# 3. Install Ollama + pull Qwen 3.5 (optional — or use NVIDIA NIM)
-curl -fsSL https://ollama.com/install.sh | sh
-ollama pull qwen3.5:0.8b
-
-# 4. Install Hermes Agent
+# 3. Install Hermes Agent
 curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
 
-# 5. Copy deployment skill to Hermes (root-owned)
+# 4. Copy deployment skill to Hermes (root-owned)
 sudo mkdir -p /root/.hermes/skills
 sudo cp -r skills/deploy /root/.hermes/skills/
 
-# 6. Start Hermes as root — it will guide you through the rest
+# 5. Start Hermes as root — it will guide you through the rest
 sudo hermes
 ```
 
@@ -58,15 +54,14 @@ Once Hermes is running, tell it: **"deploy hermes-k8s"** — it will read the de
 | Dashboard | `https://dashboard.domain.com` | Manage friends, budget groups, usage |
 | LiteLLM | `https://litellm.domain.com` | LLM API gateway with per-user keys |
 | Friends | `https://<name>.domain.com` | Individual terminal shells |
-| Local LLM | `http://localhost:11434` | Qwen 3.5 via Ollama |
 
 ## Stack
 
 ```
-Cloudflare (*.domain.com → your-ip)
+DuckDNS (*.domain.com → your-ip)
     │
     ▼
-Traefik (Let's Encrypt wildcard TLS)
+Traefik (self-signed or Let's Encrypt TLS)
   ┌──────────┬───────────────┬──────────────────┐
   │          │               │                  │
 dashboard  api            litellm          <friend>
@@ -74,8 +69,10 @@ frontend   :8000          :4000             :7681
 (React)    (FastAPI)      (LiteLLM)         (ttyd)
                 │               │
             PostgreSQL      PostgreSQL
-           (dashboard)      (litellm)
+           (dashboard)      (litellm_db)
 ```
+
+**Key Architecture:** Friend pods get dynamic ConfigMap/Secret injection — NOT baked-in config. Each friend's model, API key, and budget are configured at runtime via the dashboard API.
 
 ---
 
@@ -86,13 +83,14 @@ The full deployment guide lives in `skills/deploy/` and is readable by Hermes Ag
 | Document | Purpose |
 |----------|---------|
 | [skills/deploy/SKILL.md](skills/deploy/SKILL.md) | Agent-facing deployment entry point |
+| [skills/deploy/references/hermes-k8s-pitfalls.md](skills/deploy/references/hermes-k8s-pitfalls.md) | Production pitfalls and fixes |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture and data flow |
 | [docs/PREREQUISITES.md](docs/PREREQUISITES.md) | Hardware/software requirements |
 | [docs/INSTALL-OS.md](docs/INSTALL-OS.md) | Multi-OS installation (Ubuntu, Fedora, etc.) |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Step-by-step deployment guide |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Config reference and provider setup |
 | [docs/CREDENTIALS.md](docs/CREDENTIALS.md) | API keys and secrets management |
-| [docs/DNS-SETUP.md](docs/DNS-SETUP.md) | Cloudflare domain configuration |
+| [docs/DNS-SETUP.md](docs/DNS-SETUP.md) | DNS configuration (Cloudflare, DuckDNS) |
 | [docs/MODELS.md](docs/MODELS.md) | Adding LLM providers |
 | [docs/USAGE.md](docs/USAGE.md) | How to use the system |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Common issues and fixes |
@@ -109,62 +107,53 @@ The full deployment guide lives in `skills/deploy/` and is readable by Hermes Ag
 | CPU | 2 cores |
 | RAM | 4 GB |
 | Disk | 20 GB |
-| Network | Public IP or Cloudflare-proxied domain |
+| Network | Public IP or LAN with domain/DuckDNS |
 
 ### Software
 
 | Tool | Why | Install |
 |------|-----|---------|
-| Docker | Container runtime | `curl -fsSL https://get.docker.com \| sh` |
-| Docker Compose | Multi-container orchestration | Included with Docker |
-| Git | Clone repo | `apt install git` / `dnf install git` |
+| Podman | Container runtime (NOT Docker) | `dnf install podman` / `apt-get install podman` |
+| Git | Clone repo | Pre-installed on most distros |
 | curl | Download scripts | Pre-installed on most distros |
+| k3s | Kubernetes | Auto-installed by deploy script |
+| mkcert | Self-signed TLS certs | Auto-installed by deploy script |
 
 ### Optional
 
 | Tool | Why |
 |------|-----|
-| Ollama | Local LLM inference |
-| Hermes Agent | AI-assisted deployment and management |
+| NVIDIA API key | Free cloud inference (default) |
 | Cloudflare account | DNS + TLS wildcard certs |
+| DuckDNS account | Free dynamic DNS (no domain needed) |
 
 ---
 
 ## Configuration
 
-### Environment Variables
+### Adding LLM Providers
 
-Create `.env` in the repo root:
-
-```bash
-# Domain
-DOMAIN=yourdomain.com
-EMAIL=you@example.com
-
-# Cloudflare
-CF_API_TOKEN=your-cloudflare-api-token
-
-# PostgreSQL
-PG_PASSWORD=your-secure-password
-
-# LiteLLM
-LITELLM_MASTER_KEY=sk-master-your-key-here
-
-# OpenAI (optional — for GPT models)
-OPENAI_API_KEY=sk-your-key-here
-```
-
-### Adding More LLM Providers
-
-Edit `litellm-config.yaml`:
+Edit `litellm-config.yaml` ConfigMap:
 
 ```yaml
 model_list:
-  # Local Qwen via Ollama
-  - model_name: qwen3.5
+  # NVIDIA NIM (default — free)
+  - model_name: deepseek-v4-pro
     litellm_params:
-      model: ollama/qwen3.5:0.8b
-      api_base: http://host.docker.internal:11434
+      model: openai/deepseek-ai/deepseek-v4-pro
+      api_key: os.environ/NVIDIA_API_KEY
+      api_base: https://integrate.api.nvidia.com/v1
+    model_info:
+      context_length: 131072
+
+  # Xiaomi MiMo
+  - model_name: mimo-v2.5-pro
+    litellm_params:
+      model: openai/mimo-v2.5-pro
+      api_key: os.environ/XIAOMI_API_KEY
+      api_base: https://xiaomimimo.com/v1
+    model_info:
+      context_length: 131072
 
   # OpenAI
   - model_name: gpt-4o
@@ -179,20 +168,31 @@ model_list:
       api_key: os.environ/ANTHROPIC_API_KEY
 ```
 
+**Important:** For ANY OpenAI-compatible API (NVIDIA NIM, MiMo, vLLM, custom servers), use the `openai/` provider prefix in LiteLLM. Do NOT use the provider's own name (e.g. `nvidia/`, `xiaomi/`).
+
 ---
 
 ## API Reference
 
 ```
+# Friends
 GET    /api/friends                         → list friends
 GET    /api/friends/{name}                  → friend details
 POST   /api/friends                         → create friend
 DELETE /api/friends/{name}                  → delete friend
-POST   /api/friends/{name}/assign-group     → assign budget group
+
+# Multi-group assignment
+POST   /api/friends/{name}/groups/{group_id}   → assign group
+DELETE /api/friends/{name}/groups/{group_id}    → remove group
+PUT    /api/friends/{name}/groups               → set all groups (replace)
+
+# Budget groups
 GET    /api/budget-groups                   → list budget groups
 POST   /api/budget-groups                   → create group
 PUT    /api/budget-groups/{id}              → update group
 DELETE /api/budget-groups/{id}              → delete group
+
+# Usage
 GET    /api/usage                           → usage stats
 GET    /api/usage/models                    → list models
 ```
@@ -219,6 +219,22 @@ kubectl patch deployment traefik -n kube-system --type json -p '[
   {"op": "add", "path": "/spec/template/spec/dnsConfig/nameservers", "value": ["1.1.1.1", "8.8.8.8"]}
 ]'
 ```
+
+### Friend pod crashes with "Read-only file system"
+
+ConfigMap mounted over entire `/root/.hermes` directory. Fix: use `subPath: config.yaml` in volume mount (see Pitfall 19).
+
+### Friend can't make API calls (Authentication Error)
+
+LiteLLM virtual key is stale. Fix: delete and recreate friend, or use auto-refresh on group assignment (see Pitfall 21/24).
+
+### LiteLLM drops dashboard tables (CRITICAL)
+
+LiteLLM Prisma migrations destroy shared database. Fix: ALWAYS use separate databases (`hermes_dashboard` for dashboard, `litellm_db` for LiteLLM). See Pitfall 13.
+
+### Model shows "LLM Provider NOT provided"
+
+Wrong provider prefix in LiteLLM config. Fix: use `openai/` prefix for ANY OpenAI-compatible API. See Pitfall 17.
 
 ### Disk full
 

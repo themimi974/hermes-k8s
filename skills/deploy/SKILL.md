@@ -1,12 +1,12 @@
 ---
 name: hermes-k8s-deploy
 description: "Deploy and manage hermes-k8s — per-user isolated Hermes Agent subdomains with LiteLLM gateway and local LLM."
-version: 1.6.0
+version: 1.7.0
 author: hermes-k8s
 platforms: [linux]
 metadata:
   hermes:
-    tags: [deploy, k3s, litellm, ollama, infrastructure, self-hosted]
+    tags: [deploy, k3s, litellm, infrastructure, self-hosted]
     related_skills: [hermes-agent, k3s-per-user-isolated-subdomains]
 ---
 
@@ -19,14 +19,16 @@ You are an infrastructure deployment agent. Your job is to deploy and manage the
 hermes-k8s deploys:
 - **k3s** single-node cluster
 - **Traefik** reverse proxy with TLS (Let's Encrypt or self-signed)
-- **PostgreSQL** for dashboard and LiteLLM databases
+- **PostgreSQL** for dashboard and LiteLLM databases (SEPARATE databases — see Pitfall 13)
 - **LiteLLM** API gateway with per-user virtual keys and budget controls
 - **Dashboard** (FastAPI + React) for managing friends, groups, usage
 - **Friend pods** — isolated terminal shells via ttyd
-- **Ollama + Qwen 3.5** — local LLM inference (optional)
-- **NVIDIA NIM** — free cloud inference with `deepseek-ai/deepseek-v4-pro` (default when no local model)
+- **NVIDIA NIM** — cloud inference with `deepseek-ai/deepseek-v4-pro` or custom models (default when no local model)
+- **Xiaomi MiMo** — `mimo-v2.5-pro` via `xiaomimimo.com` (user-configurable)
 
 Each "friend" gets their own Kubernetes namespace, persistent storage, and a unique subdomain behind Traefik.
+
+**Key Architecture Decision:** Friend pod config is NOT baked into the Docker image. Each friend gets their own ConfigMap and Secret injected at runtime via the dashboard API. This ensures per-friend model/budget isolation.
 
 ## Deployment Flow
 
@@ -40,8 +42,9 @@ When the user says "deploy hermes-k8s", follow these steps IN ORDER:
 4. **Git** — `git --version`
 5. **Disk** — need ≥10GB free
 6. **RAM** — need ≥4GB
-7. **Ollama** — `ollama --version`, install if missing
-8. **Qwen model** — `ollama pull qwen3.5:0.8b`
+7. **Ollama** (OPTIONAL) — `ollama --version`, install ONLY if user wants local model. Skip entirely for NVIDIA NIM-only deployments.
+
+**NVIDIA NIM-only deployments:** If user says "no ollama" or "NIM only", skip step 7 entirely. The system works with cloud inference only.
 
 #### Firewalld (Fedora/RHEL — CRITICAL)
 
@@ -222,6 +225,28 @@ Print summary:
 - How to access the terminal
 - TLS method used and any caveats (e.g. "self-signed — browser will warn, install CA cert to dismiss")
 
+## Git Push Authentication
+
+After deploying, the dev agent will push code changes. If pushing via HTTPS fails with "Username for 'https://github.com'", switch to SSH:
+
+```bash
+cd /home/admin/hermes-k8s
+
+# Use the user's GitHub SSH key
+git config core.sshCommand "ssh -i /home/admin/github-key -o IdentitiesOnly=yes"
+
+# Switch remote to SSH
+git remote set-url origin git@github.com:themimi974/hermes-k8s.git
+
+# Test auth
+ssh -i /home/admin/github-key -o StrictHostKeyChecking=no -T git@github.com
+
+# Push
+git push origin main
+```
+
+**Note:** The SSH key must be added to the user's GitHub account (Settings → SSH keys).
+
 ## Credential Management
 
 **NEVER** echo back raw credentials in conversation. Show only:
@@ -264,6 +289,11 @@ Store credentials in:
 | Traefik 502, `dial tcp ... no route to host` (Fedora/RHEL) | firewalld not trusted on cni0/flannel.1 | `firewall-cmd --zone=trusted --add-interface=cni0 --permanent && firewall-cmd --zone=trusted --add-interface=flannel.1 --permanent && firewall-cmd --reload` |
 | cni0 missing / all pods broken networking | Docker iptables conflicting with k3s flannel | `systemctl disable --now docker docker.socket` then reboot — Docker must not run alongside k3s |
 | Middleware "auth secret must be set" or "allowCrossNamespace is disabled" | `hermes-basic` middleware referenced but not defined | Single-node deploys: no auth middleware needed (Traefik/network boundary is sufficient). For public deploys: create real htpasswd middleware in each namespace. |
+| Friend pod: `OSError: [Errno 30] Read-only file system: '/root/.hermes/cron'` | ConfigMap mounted over entire `/root/.hermes` directory as read-only | Use `subPath: config.yaml` to mount only the file. See Pitfall 19. |
+| Friend pod: `Authentication Error, Invalid proxy server token passed` | LiteLLM virtual key is stale (DB recreation, key not in LiteLLM) | Delete and recreate friends, or use auto-refresh on group assignment. See Pitfall 21/24. |
+| LiteLLM model: `LLM Provider NOT provided` | Wrong provider prefix for custom APIs | Use `openai/` prefix for ANY OpenAI-compatible API (NVIDIA NIM, MiMo, vLLM, custom). See Pitfall 17. |
+| Friend pod: friend runs but can't make API calls | ConfigMap not created, or RBAC missing | Check dashboard-api logs for 403 errors; ensure ClusterRole `friend-manager` exists. See Pitfall 14. |
+| LiteLLM drops dashboard tables (CRITICAL) | LiteLLM Prisma migrations run on shared database | ALWAYS use separate databases: `hermes_dashboard` for dashboard, `litellm_db` for LiteLLM. See Pitfall 13. |
 
 **Note on authentication:** This repo does NOT deploy auth middleware for single-node LAN use. Dashboard, LiteLLM, and gateway are accessible without authentication on the local network. This is a deliberate design choice — the network boundary (LAN + no port forwarding) is sufficient for a single friend group. For public-facing deploys, add per-namespace basicAuth middleware.
 
@@ -271,11 +301,29 @@ Store credentials in:
 
 | Path | Purpose |
 |------|---------|
-| `/home/admin/workspace/hermes-k8s/` | Repo root |
+| `/home/admin/hermes-k8s/` | Repo root |
 | `deploy.sh` | Main deployment script |
 | `skills/deploy/SKILL.md` | This file |
+| `skills/deploy/references/hermes-k8s-pitfalls.md` | Production pitfalls and fixes |
 | `litellm/` | LiteLLM Dockerfile + manifests |
 | `dashboard/` | API + Frontend + Manifests |
 | `gateway/` | Landing page deployment |
 | `scripts/` | Friend management + apply-manifest.sh |
 | `docs/` | Detailed documentation |
+
+## Related Documents
+
+| Document | Purpose |
+|----------|---------|
+| [skills/deploy/SKILL.md](skills/deploy/SKILL.md) | Agent-facing deployment entry point |
+| [skills/deploy/references/hermes-k8s-pitfalls.md](skills/deploy/references/hermes-k8s-pitfalls.md) | Production pitfalls and fixes |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture and data flow |
+| [docs/PREREQUISITES.md](docs/PREREQUISITES.md) | Hardware/software requirements |
+| [docs/INSTALL-OS.md](docs/INSTALL-OS.md) | Multi-OS installation (Ubuntu, Fedora, etc.) |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Step-by-step deployment guide |
+| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Config reference and provider setup |
+| [docs/CREDENTIALS.md](docs/CREDENTIALS.md) | API keys and secrets management |
+| [docs/DNS-SETUP.md](docs/DNS-SETUP.md) | DNS configuration (Cloudflare, DuckDNS) |
+| [docs/MODELS.md](docs/MODELS.md) | Adding LLM providers |
+| [docs/USAGE.md](docs/USAGE.md) | How to use the system |
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Common issues and fixes |
