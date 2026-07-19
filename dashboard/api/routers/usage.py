@@ -13,10 +13,6 @@ from config import settings
 
 router = APIRouter(prefix="/api/usage", tags=["usage"])
 
-LITELLM_DB_URL = (
-    f"postgresql://{settings.postgres_user}:{settings.postgres_password}@{settings.postgres_host}:{settings.postgres_port}/litellm_db"
-)
-
 # Valid period aliases
 INTERVAL_MAP = {
     "1h": "1 hour",
@@ -30,8 +26,8 @@ INTERVAL_MAP = {
 def _get_litellm_db():
     """Connect to the LiteLLM database (separate DB)."""
     url = (
-        f"postgresql://{settings.postgres_user}:{settings.postgres_password}@{settings.postgres_host}"
-        f":{settings.postgres_port}/litellm_db"
+        f"postgresql://{settings.postgres_user}:{settings.postgres_password}"
+        f"@{settings.postgres_host}:{settings.postgres_port}/litellm_db"
     )
     return create_engine(url, pool_pre_ping=True)
 
@@ -50,11 +46,16 @@ async def get_usage(period: str = Query("24h", pattern=r"^(1h|6h|24h|7d|30d)$"))
     try:
         interval = _safe_interval(period)
         with engine.connect() as conn:
-            # Total
+            # Total with input/output/cached breakdown
             result = conn.execute(text("""
                 SELECT
                     COUNT(*) as total_requests,
                     COALESCE(SUM(CAST(total_tokens AS BIGINT)), 0) as total_tokens,
+                    COALESCE(SUM(CAST(prompt_tokens AS BIGINT)), 0) as input_tokens,
+                    COALESCE(SUM(CAST(completion_tokens AS BIGINT)), 0) as output_tokens,
+                    COALESCE(SUM(
+                        CAST((metadata->'additional_usage_values'->>'cache_read_input_tokens') AS BIGINT)
+                    ), 0) as cached_tokens,
                     COALESCE(SUM(CAST(spend AS NUMERIC)), 0) as total_cost
                 FROM "LiteLLM_SpendLogs"
                 WHERE "startTime" > NOW() - INTERVAL :interval
@@ -62,12 +63,20 @@ async def get_usage(period: str = Query("24h", pattern=r"^(1h|6h|24h|7d|30d)$"))
             row = result.fetchone()
             total_requests = row[0] if row else 0
             total_tokens = int(row[1]) if row else 0
-            total_cost = float(row[2]) if row else 0
+            input_tokens = int(row[2]) if row else 0
+            output_tokens = int(row[3]) if row else 0
+            cached_tokens = int(row[4]) if row else 0
+            total_cost = float(row[5]) if row else 0
 
             # By model
             result = conn.execute(text("""
                 SELECT model, COUNT(*) as requests,
                        COALESCE(SUM(CAST(total_tokens AS BIGINT)), 0) as tokens,
+                       COALESCE(SUM(CAST(prompt_tokens AS BIGINT)), 0) as input_tokens,
+                       COALESCE(SUM(CAST(completion_tokens AS BIGINT)), 0) as output_tokens,
+                       COALESCE(SUM(
+                           CAST((metadata->'additional_usage_values'->>'cache_read_input_tokens') AS BIGINT)
+                       ), 0) as cached_tokens,
                        COALESCE(SUM(CAST(spend AS NUMERIC)), 0) as cost
                 FROM "LiteLLM_SpendLogs"
                 WHERE "startTime" > NOW() - INTERVAL :interval
@@ -79,7 +88,10 @@ async def get_usage(period: str = Query("24h", pattern=r"^(1h|6h|24h|7d|30d)$"))
                 by_model[r[0] or "unknown"] = {
                     "requests": r[1],
                     "tokens": int(r[2]),
-                    "cost": round(float(r[3]), 4),
+                    "input_tokens": int(r[3]),
+                    "output_tokens": int(r[4]),
+                    "cached_tokens": int(r[5]),
+                    "cost": round(float(r[6]), 4),
                 }
 
             # By friend (API key)
@@ -87,6 +99,11 @@ async def get_usage(period: str = Query("24h", pattern=r"^(1h|6h|24h|7d|30d)$"))
                 SELECT k.key_alias,
                        COUNT(*) as requests,
                        COALESCE(SUM(CAST(s.total_tokens AS BIGINT)), 0) as tokens,
+                       COALESCE(SUM(CAST(s.prompt_tokens AS BIGINT)), 0) as input_tokens,
+                       COALESCE(SUM(CAST(s.completion_tokens AS BIGINT)), 0) as output_tokens,
+                       COALESCE(SUM(
+                           CAST((s.metadata->'additional_usage_values'->>'cache_read_input_tokens') AS BIGINT)
+                       ), 0) as cached_tokens,
                        COALESCE(SUM(CAST(s.spend AS NUMERIC)), 0) as cost
                 FROM "LiteLLM_SpendLogs" s
                 LEFT JOIN "LiteLLM_VerificationToken" k ON s.api_key = k.token
@@ -100,12 +117,18 @@ async def get_usage(period: str = Query("24h", pattern=r"^(1h|6h|24h|7d|30d)$"))
                 by_friend[r[0] or "unknown"] = {
                     "requests": r[1],
                     "tokens": int(r[2]),
-                    "cost": round(float(r[3]), 4),
+                    "input_tokens": int(r[3]),
+                    "output_tokens": int(r[4]),
+                    "cached_tokens": int(r[5]),
+                    "cost": round(float(r[6]), 4),
                 }
 
             return {
                 "total_requests": total_requests,
                 "total_tokens": total_tokens,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "cached_tokens": cached_tokens,
                 "total_cost": round(total_cost, 4),
                 "by_model": by_model,
                 "by_friend": by_friend,
@@ -115,6 +138,9 @@ async def get_usage(period: str = Query("24h", pattern=r"^(1h|6h|24h|7d|30d)$"))
         return {
             "total_requests": 0,
             "total_tokens": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cached_tokens": 0,
             "total_cost": 0.0,
             "by_model": {},
             "by_friend": {},
@@ -139,6 +165,11 @@ async def usage_by_friends(period: str = Query("24h", pattern=r"^(1h|6h|24h|7d|3
                 SELECT k.key_alias,
                        COUNT(*) as requests,
                        COALESCE(SUM(CAST(s.total_tokens AS BIGINT)), 0) as tokens,
+                       COALESCE(SUM(CAST(s.prompt_tokens AS BIGINT)), 0) as input_tokens,
+                       COALESCE(SUM(CAST(s.completion_tokens AS BIGINT)), 0) as output_tokens,
+                       COALESCE(SUM(
+                           CAST((s.metadata->'additional_usage_values'->>'cache_read_input_tokens') AS BIGINT)
+                       ), 0) as cached_tokens,
                        COALESCE(SUM(CAST(s.spend AS NUMERIC)), 0) as cost,
                        MIN(s."startTime") as first_seen,
                        MAX(s."startTime") as last_seen
@@ -153,16 +184,18 @@ async def usage_by_friends(period: str = Query("24h", pattern=r"^(1h|6h|24h|7d|3
             friends = []
             for r in result.fetchall():
                 name = r[0]
-                # Strip "friend-" prefix if present (LiteLLM key naming)
                 display_name = name.replace("friend-", "") if name and name.startswith("friend-") else name
                 friends.append({
                     "name": display_name,
                     "key_name": name,
                     "requests": r[1],
                     "tokens": int(r[2]),
-                    "cost": round(float(r[3]), 4),
-                    "first_seen": r[4].isoformat() if r[4] else None,
-                    "last_seen": r[5].isoformat() if r[5] else None,
+                    "input_tokens": int(r[3]),
+                    "output_tokens": int(r[4]),
+                    "cached_tokens": int(r[5]),
+                    "cost": round(float(r[6]), 4),
+                    "first_seen": r[7].isoformat() if r[7] else None,
+                    "last_seen": r[8].isoformat() if r[8] else None,
                 })
             return {"friends": friends, "period": period}
     except Exception as e:
@@ -177,13 +210,11 @@ async def usage_for_friend(
     period: str = Query("24h", pattern=r"^(1h|6h|24h|7d|30d)$"),
 ):
     """Get usage breakdown by model for a specific friend."""
-    # Try both "friend-{name}" and "{name}" key patterns
     key_patterns = [f"friend-{name}", name]
     engine = _get_litellm_db()
     try:
         interval = _safe_interval(period)
         with engine.connect() as conn:
-            # Build IN clause for key patterns
             placeholders = ", ".join([f":kp{i}" for i in range(len(key_patterns))])
             params = {"interval": interval}
             for i, kp in enumerate(key_patterns):
@@ -193,6 +224,11 @@ async def usage_for_friend(
             result = conn.execute(text(f"""
                 SELECT COUNT(*) as requests,
                        COALESCE(SUM(CAST(s.total_tokens AS BIGINT)), 0) as tokens,
+                       COALESCE(SUM(CAST(s.prompt_tokens AS BIGINT)), 0) as input_tokens,
+                       COALESCE(SUM(CAST(s.completion_tokens AS BIGINT)), 0) as output_tokens,
+                       COALESCE(SUM(
+                           CAST((s.metadata->'additional_usage_values'->>'cache_read_input_tokens') AS BIGINT)
+                       ), 0) as cached_tokens,
                        COALESCE(SUM(CAST(s.spend AS NUMERIC)), 0) as cost
                 FROM "LiteLLM_SpendLogs" s
                 JOIN "LiteLLM_VerificationToken" k ON s.api_key = k.token
@@ -203,7 +239,10 @@ async def usage_for_friend(
             total = {
                 "requests": row[0] if row else 0,
                 "tokens": int(row[1]) if row else 0,
-                "cost": round(float(row[2]), 4) if row else 0,
+                "input_tokens": int(row[2]) if row else 0,
+                "output_tokens": int(row[3]) if row else 0,
+                "cached_tokens": int(row[4]) if row else 0,
+                "cost": round(float(row[5]), 4) if row else 0,
             }
 
             # Per-model breakdown
@@ -211,6 +250,11 @@ async def usage_for_friend(
                 SELECT s.model,
                        COUNT(*) as requests,
                        COALESCE(SUM(CAST(s.total_tokens AS BIGINT)), 0) as tokens,
+                       COALESCE(SUM(CAST(s.prompt_tokens AS BIGINT)), 0) as input_tokens,
+                       COALESCE(SUM(CAST(s.completion_tokens AS BIGINT)), 0) as output_tokens,
+                       COALESCE(SUM(
+                           CAST((s.metadata->'additional_usage_values'->>'cache_read_input_tokens') AS BIGINT)
+                       ), 0) as cached_tokens,
                        COALESCE(SUM(CAST(s.spend AS NUMERIC)), 0) as cost
                 FROM "LiteLLM_SpendLogs" s
                 JOIN "LiteLLM_VerificationToken" k ON s.api_key = k.token
@@ -226,7 +270,10 @@ async def usage_for_friend(
                     "model": r[0] or "unknown",
                     "requests": r[1],
                     "tokens": int(r[2]),
-                    "cost": round(float(r[3]), 4),
+                    "input_tokens": int(r[3]),
+                    "output_tokens": int(r[4]),
+                    "cached_tokens": int(r[5]),
+                    "cost": round(float(r[6]), 4),
                 })
 
             return {
@@ -238,7 +285,7 @@ async def usage_for_friend(
     except Exception as e:
         return {
             "friend": name,
-            "total": {"requests": 0, "tokens": 0, "cost": 0},
+            "total": {"requests": 0, "tokens": 0, "input_tokens": 0, "output_tokens": 0, "cached_tokens": 0, "cost": 0},
             "by_model": [],
             "period": period,
             "note": f"LiteLLM DB not ready: {e}",
@@ -260,8 +307,13 @@ async def usage_by_models(period: str = Query("24h", pattern=r"^(1h|6h|24h|7d|30
             result = conn.execute(text("""
                 SELECT model,
                        COUNT(*) as requests,
-                       COALESCE(SUM(CAST(s.total_tokens AS BIGINT)), 0) as tokens,
-                       COALESCE(SUM(CAST(s.spend AS NUMERIC)), 0) as cost,
+                       COALESCE(SUM(CAST(total_tokens AS BIGINT)), 0) as tokens,
+                       COALESCE(SUM(CAST(prompt_tokens AS BIGINT)), 0) as input_tokens,
+                       COALESCE(SUM(CAST(completion_tokens AS BIGINT)), 0) as output_tokens,
+                       COALESCE(SUM(
+                           CAST((metadata->'additional_usage_values'->>'cache_read_input_tokens') AS BIGINT)
+                       ), 0) as cached_tokens,
+                       COALESCE(SUM(CAST(spend AS NUMERIC)), 0) as cost,
                        MIN("startTime") as first_used,
                        MAX("startTime") as last_used
                 FROM "LiteLLM_SpendLogs"
@@ -276,9 +328,12 @@ async def usage_by_models(period: str = Query("24h", pattern=r"^(1h|6h|24h|7d|30
                     "model": r[0] or "unknown",
                     "requests": r[1],
                     "tokens": int(r[2]),
-                    "cost": round(float(r[3]), 4),
-                    "first_used": r[4].isoformat() if r[4] else None,
-                    "last_used": r[5].isoformat() if r[5] else None,
+                    "input_tokens": int(r[3]),
+                    "output_tokens": int(r[4]),
+                    "cached_tokens": int(r[5]),
+                    "cost": round(float(r[6]), 4),
+                    "first_used": r[7].isoformat() if r[7] else None,
+                    "last_used": r[8].isoformat() if r[8] else None,
                 })
             return {"models": models, "period": period}
     except Exception as e:
@@ -301,6 +356,11 @@ async def usage_for_model(
             result = conn.execute(text("""
                 SELECT COUNT(*) as requests,
                        COALESCE(SUM(CAST(total_tokens AS BIGINT)), 0) as tokens,
+                       COALESCE(SUM(CAST(prompt_tokens AS BIGINT)), 0) as input_tokens,
+                       COALESCE(SUM(CAST(completion_tokens AS BIGINT)), 0) as output_tokens,
+                       COALESCE(SUM(
+                           CAST((metadata->'additional_usage_values'->>'cache_read_input_tokens') AS BIGINT)
+                       ), 0) as cached_tokens,
                        COALESCE(SUM(CAST(spend AS NUMERIC)), 0) as cost
                 FROM "LiteLLM_SpendLogs"
                 WHERE model = :model
@@ -310,7 +370,10 @@ async def usage_for_model(
             total = {
                 "requests": row[0] if row else 0,
                 "tokens": int(row[1]) if row else 0,
-                "cost": round(float(row[2]), 4) if row else 0,
+                "input_tokens": int(row[2]) if row else 0,
+                "output_tokens": int(row[3]) if row else 0,
+                "cached_tokens": int(row[4]) if row else 0,
+                "cost": round(float(row[5]), 4) if row else 0,
             }
 
             # Per-friend breakdown for this model
@@ -318,6 +381,11 @@ async def usage_for_model(
                 SELECT k.key_alias,
                        COUNT(*) as requests,
                        COALESCE(SUM(CAST(s.total_tokens AS BIGINT)), 0) as tokens,
+                       COALESCE(SUM(CAST(s.prompt_tokens AS BIGINT)), 0) as input_tokens,
+                       COALESCE(SUM(CAST(s.completion_tokens AS BIGINT)), 0) as output_tokens,
+                       COALESCE(SUM(
+                           CAST((s.metadata->'additional_usage_values'->>'cache_read_input_tokens') AS BIGINT)
+                       ), 0) as cached_tokens,
                        COALESCE(SUM(CAST(s.spend AS NUMERIC)), 0) as cost
                 FROM "LiteLLM_SpendLogs" s
                 LEFT JOIN "LiteLLM_VerificationToken" k ON s.api_key = k.token
@@ -336,7 +404,10 @@ async def usage_for_model(
                     "key_name": name,
                     "requests": r[1],
                     "tokens": int(r[2]),
-                    "cost": round(float(r[3]), 4),
+                    "input_tokens": int(r[3]),
+                    "output_tokens": int(r[4]),
+                    "cached_tokens": int(r[5]),
+                    "cost": round(float(r[6]), 4),
                 })
 
             return {
@@ -348,7 +419,7 @@ async def usage_for_model(
     except Exception as e:
         return {
             "model": model_id,
-            "total": {"requests": 0, "tokens": 0, "cost": 0},
+            "total": {"requests": 0, "tokens": 0, "input_tokens": 0, "output_tokens": 0, "cached_tokens": 0, "cost": 0},
             "by_friend": [],
             "period": period,
             "note": f"LiteLLM DB not ready: {e}",
@@ -362,12 +433,12 @@ async def usage_for_model(
 
 @router.get("/matrix")
 async def usage_matrix(period: str = Query("24h", pattern=r"^(1h|6h|24h|7d|30d)$")):
-    """Get friend × model usage matrix (for cross-table / heatmap view).
+    """Get friend × model usage matrix with detailed token breakdown.
 
     Returns:
         rows: list of friend names
         cols: list of model names
-        cells: dict keyed by "friend|model" → {requests, tokens, cost}
+        cells: dict keyed by "friend|model" → {requests, input_tokens, output_tokens, cached_tokens, cache_hit_pct, tokens, cost}
     """
     engine = _get_litellm_db()
     try:
@@ -377,6 +448,11 @@ async def usage_matrix(period: str = Query("24h", pattern=r"^(1h|6h|24h|7d|30d)$
                 SELECT k.key_alias, s.model,
                        COUNT(*) as requests,
                        COALESCE(SUM(CAST(s.total_tokens AS BIGINT)), 0) as tokens,
+                       COALESCE(SUM(CAST(s.prompt_tokens AS BIGINT)), 0) as input_tokens,
+                       COALESCE(SUM(CAST(s.completion_tokens AS BIGINT)), 0) as output_tokens,
+                       COALESCE(SUM(
+                           CAST((s.metadata->'additional_usage_values'->>'cache_read_input_tokens') AS BIGINT)
+                       ), 0) as cached_tokens,
                        COALESCE(SUM(CAST(s.spend AS NUMERIC)), 0) as cost
                 FROM "LiteLLM_SpendLogs" s
                 LEFT JOIN "LiteLLM_VerificationToken" k ON s.api_key = k.token
@@ -394,12 +470,20 @@ async def usage_matrix(period: str = Query("24h", pattern=r"^(1h|6h|24h|7d|30d)$
                 model = r[1] or "unknown"
                 display_name = raw_name.replace("friend-", "") if raw_name.startswith("friend-") else raw_name
 
+                input_tok = int(r[4])
+                cached_tok = int(r[6])
+                cache_hit_pct = round((cached_tok / input_tok * 100), 1) if input_tok > 0 else 0.0
+
                 friends_set.add(display_name)
                 models_set.add(model)
                 cells[f"{display_name}|{model}"] = {
                     "requests": r[2],
                     "tokens": int(r[3]),
-                    "cost": round(float(r[4]), 4),
+                    "input_tokens": input_tok,
+                    "output_tokens": int(r[5]),
+                    "cached_tokens": cached_tok,
+                    "cache_hit_pct": cache_hit_pct,
+                    "cost": round(float(r[7]), 4),
                 }
 
             return {
