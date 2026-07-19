@@ -254,7 +254,7 @@ agent:
   max_turns: 90
 
 terminal:
-  backend: ssh
+  backend: local
   timeout: 300
 
 compression:
@@ -368,28 +368,15 @@ def ensure_deployment_volume_mounts(ns: str, litellm_key: str, name: str = "ttyd
 
         needs_update = False
 
-        # Add hermes-config volume if missing
-        if "hermes-config" not in existing_volumes:
-            if not dep.spec.template.spec.volumes:
-                dep.spec.template.spec.volumes = []
-            dep.spec.template.spec.volumes.append(
-                client.V1Volume(
-                    name="hermes-config",
-                    config_map=client.V1ConfigMapVolumeSource(name="hermes-config"),
-                )
-            )
-            needs_update = True
-
-        # Add hermes-config volume mount if missing
-        if "hermes-config" not in existing_mounts:
+        # Config is written to PVC — no ConfigMap mount needed
+        # Just ensure PVC is mounted at /root/.hermes
+        if "/root/.hermes" not in [m.mount_path for m in (container.volume_mounts or [])]:
             if not container.volume_mounts:
                 container.volume_mounts = []
             container.volume_mounts.append(
                 client.V1VolumeMount(
-                    name="hermes-config",
-                    mount_path="/root/.hermes/config.yaml",
-                    sub_path="config.yaml",
-                    read_only=True,
+                    name="friends-data",
+                    mount_path="/root/.hermes",
                 )
             )
             needs_update = True
