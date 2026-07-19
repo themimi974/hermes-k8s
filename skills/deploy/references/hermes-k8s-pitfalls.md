@@ -708,3 +708,59 @@ kubectl exec -n dashboard deployment/postgresql -- psql -U "$PG_USER" -d litellm
 
 - `references/deployment-checklist.md` — Quick-reference post-deploy verification checklist
 - `references/database-migration.md` — Schema changes, migration SQL, and merge logic for multi-group feature
+
+## Pitfall 33: litellm-credentials Secret Missing in dashboard Namespace (CRITICAL)
+
+The `litellm-credentials` secret is created in `litellm` namespace but the
+dashboard-api runs in `dashboard` namespace. K8s secrets are namespace-scoped —
+dashboard-api reads an empty `LITELLM_MASTER_KEY`, causing LiteLLM key creation
+to fail with "Illegal header value b'Bearer '".
+
+**Symptom:** Friends created via dashboard have no LiteLLM key. Dashboard API
+logs show: `Failed to create LiteLLM key for '<name>': Illegal header value b'Bearer '`
+
+**Fix — create the secret in BOTH namespaces during deploy:**
+```bash
+# After creating litellm-credentials in litellm namespace
+kubectl get secret litellm-credentials -n litellm -o yaml | \
+  sed 's/namespace: litellm/namespace: dashboard/' | \
+  kubectl apply -f -
+```
+
+**Verify:** `kubectl get secret litellm-credentials -n dashboard`
+
+## Pitfall 34: Friend Pod Missing Volume Mounts After Group Assignment
+
+When a friend is created WITHOUT a litellm_key (e.g. created before budget
+group assignment), the deployment is created without hermes-config volume mount
+and LITELLM_API_KEY env var. Later assigning a group creates the ConfigMap and
+Secret but doesn't add them to the existing deployment.
+
+**Symptom:** Friend pod runs but has no `/root/.hermes/config.yaml`. No model
+configured. API calls fail.
+
+**Fix:** The `ensure_deployment_volume_mounts()` function in `k8s.py` adds
+missing volume mounts, volume, and env vars to existing deployments. Called
+automatically by `_update_friend_config()`.
+
+**Manual fix for existing friends:**
+```bash
+# Re-assign the group to trigger config update
+curl -sk -X POST https://dashboard.<DOMAIN>/api/friends/<NAME>/groups/<GROUP_ID>
+```
+
+## Pitfall 35: LiteLLM Needs database_url for Spend Logging
+
+LiteLLM doesn't create spend logging tables by default. The `database_url`
+must be set in the litellm-config ConfigMap for Prisma migrations to run.
+
+**Symptom:** Usage tab shows "relation LiteLLM_SpendLogs does not exist".
+
+**Fix — add to litellm-config ConfigMap:**
+```yaml
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: postgresql://<user>:<pass>@postgresql.dashboard.svc.cluster.local:5432/litellm_db
+```
+
+**Verify:** `kubectl exec -n dashboard postgresql-... -- psql -U hermes -d litellm_db -c "\dt"`
