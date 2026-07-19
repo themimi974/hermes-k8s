@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from database import init_db
 from config import settings
-from routers import health, friends, budget_groups, usage, models
+from routers import health, friends, budget_groups, usage, models, state
 
 logging.basicConfig(
     level=logging.INFO,
@@ -50,6 +50,7 @@ app.include_router(friends.router)
 app.include_router(budget_groups.router)
 app.include_router(usage.router)
 app.include_router(models.router)
+app.include_router(state.router)
 
 
 @app.get("/")
