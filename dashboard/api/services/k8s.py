@@ -304,63 +304,45 @@ def update_hermes_configmap(ns: str, model_name: str, litellm_key: str, all_mode
 def _write_config_to_pvc(ns: str, config_content: str) -> None:
     """Write config content to /root/.hermes/config.yaml in the friend's PVC.
 
-    Uses a Job to write the file since we can't exec into running pods
-    from the dashboard API.
+    Exec into the running ttyd pod to write the file directly.
+    The PVC is mounted at /root/.hermes so we can write there.
     """
-    import uuid
-    job_name = f"write-config-{uuid.uuid4().hex[:8]}"
+    import subprocess
+    import tempfile
 
-    # Escape config for shell
-    escaped = config_content.replace("'", "'\''")
+    pods = get_running_pods(ns, label_selector="app=ttyd")
+    if not pods:
+        logger.warning(f"No running ttyd pod in {ns}, cannot write config")
+        return
 
-    body = client.V1Job(
-        metadata=client.V1ObjectMeta(name=job_name, namespace=ns),
-        spec=client.V1JobSpec(
-            backoff_limit=1,
-            template=client.V1PodTemplateSpec(
-                spec=client.V1PodSpec(
-                    restart_policy="Never",
-                    containers=[
-                        client.V1Container(
-                            name="writer",
-                            image="busybox:latest",
-                            command=["sh", "-c"],
-                            args=[f"mkdir -p /root/.hermes && cat > /root/.hermes/config.yaml << '''ENDCONFIG'\''\n{escaped}\nENDCONFIG"],
-                            volume_mounts=[
-                                client.V1VolumeMount(
-                                    name="friends-data",
-                                    mount_path="/root/.hermes",
-                                )
-                            ],
-                        )
-                    ],
-                    volumes=[
-                        client.V1Volume(
-                            name="friends-data",
-                            persistent_volume_claim=client.V1PersistentVolumeClaimVolumeSource(
-                                claim_name="friend-data",
-                            ),
-                        )
-                    ],
-                ),
-            ),
-        ),
-    )
+    pod_name = pods[0]
+
+    # Write config to temp file, then cat it into the pod
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+        f.write(config_content)
+        tmp_path = f.name
 
     try:
-        batch_v1.create_namespaced_job(namespace=ns, body=body)
-        logger.info(f"Created config writer job {job_name} in {ns}")
-    except client.exceptions.ApiException as e:
-        if e.status == 409:
-            # Job already exists — delete and recreate
-            try:
-                batch_v1.delete_namespaced_job(name=job_name, namespace=ns)
-                batch_v1.create_namespaced_job(namespace=ns, body=body)
-                logger.info(f"Recreated config writer job {job_name} in {ns}")
-            except Exception as e2:
-                logger.warning(f"Failed to recreate config writer job: {e2}")
+        # Use kubectl exec to write the file
+        cmd = [
+            "kubectl", "-n", ns, "exec", "-i", pod_name, "--",
+            "sh", "-c", "mkdir -p /root/.hermes && cat > /root/.hermes/config.yaml",
+        ]
+        with open(tmp_path, 'r') as f:
+            result = subprocess.run(cmd, stdin=f, capture_output=True, text=True, timeout=30)
+
+        if result.returncode != 0:
+            logger.warning(f"Failed to write config to {ns}/{pod_name}: {result.stderr}")
         else:
-            logger.warning(f"Failed to create config writer job: {e}")
+            logger.info(f"Written config to {ns}/{pod_name}/root/.hermes/config.yaml")
+    except subprocess.TimeoutExpired:
+        logger.warning(f"Timeout writing config to {ns}/{pod_name}")
+    except Exception as e:
+        logger.warning(f"Error writing config to {ns}/{pod_name}: {e}")
+    finally:
+        import os
+        os.unlink(tmp_path)
+
 
 
 def create_litellm_secret(ns: str, litellm_key: str) -> None:
