@@ -6,7 +6,7 @@ rules:
   # Core API — namespaces, pods, services, PVCs, secrets, configmaps, resourcequotas
   - apiGroups: [""]
     resources: ["namespaces", "pods", "services", "persistentvolumeclaims", "secrets", "configmaps", "resourcequotas"]
-    verbs: ["get", "list", "watch", "create", "delete"]
+    verbs: ["get", "list", "watch", "create", "patch", "delete"]
   # Apps API — deployments, replicasets
   - apiGroups: ["apps"]
     resources: ["deployments", "replicasets"]
