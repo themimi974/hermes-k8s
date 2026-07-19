@@ -764,3 +764,57 @@ general_settings:
 ```
 
 **Verify:** `kubectl exec -n dashboard postgresql-... -- psql -U hermes -d litellm_db -c "\dt"`
+
+## Pitfall 36: Config Writer Job Fails — PVC Already Mounted
+
+The dashboard API uses a Job to write hermes config to the PVC. But the
+PVC is already mounted by the ttyd pod (ReadWriteOnce), so the Job pod
+can't mount it — stuck in "ContainerCreating" forever.
+
+**Symptom:** Multiple `write-config-*` jobs stuck in Running/Created state.
+Config in friend pod never updates.
+
+**Fix:** Use `kubectl exec` into the running ttyd pod instead of a Job:
+```python
+# Exec into running pod to write config
+cmd = ["kubectl", "-n", ns, "exec", "-i", pod_name, "--",
+       "sh", "-c", "cat > /root/.hermes/config.yaml"]
+```
+
+**RBAC requirement:** Dashboard API needs `pods/exec` permission (see Pitfall 33).
+
+## Pitfall 37: Hermes Config Only Shows 1 Model
+
+The hermes config `model.default` only sets ONE model. Friends see only
+that model in the picker, even if their LiteLLM key has access to more.
+
+**Fix:** Add `custom_providers` section with `models` list:
+```yaml
+model:
+  default: mimo-v2.5
+  provider: custom
+  base_url: http://litellm.litellm.svc.cluster.local:4000/v1
+  api_key: sk-xxx
+
+custom_providers:
+  - name: litellm
+    base_url: http://litellm.litellm.svc.cluster.local:4000/v1
+    api_key: sk-xxx
+    models:
+      - mimo-v2.5
+      - minimax-m3
+```
+
+The `_build_hermes_config()` function generates this automatically from
+the budget group's merged model list.
+
+## Pitfall 38: ConfigMap Mount Overrides PVC Mount
+
+If both a ConfigMap subPath mount and a PVC mount target the same path,
+the ConfigMap wins and the file is read-only.
+
+**Symptom:** `hermes setup` fails with "Read-only file system" error.
+
+**Fix:** Don't mount ConfigMap at `/root/.hermes/config.yaml`. Instead,
+write config directly to the PVC via exec. The `_write_config_to_pvc()`
+function handles this.
