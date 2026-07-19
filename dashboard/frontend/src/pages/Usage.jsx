@@ -372,10 +372,20 @@ function MatrixTab({ period }) {
               {models.map(m => {
                 const cell = cells[`${f}|${m}`]
                 const tokens = cell?.tokens || 0
+                const inputTok = cell?.input_tokens || 0
+                const outputTok = cell?.output_tokens || 0
+                const cachedTok = cell?.cached_tokens || 0
+                const cachePct = cell?.cache_hit_pct || 0
                 return (
                   <td key={m} className={`text-center text-xs px-2 py-2 rounded ${getColor(tokens)}`}
                       title={`${f} × ${m}: ${tokens} tokens, ${cell?.requests || 0} req, $${(cell?.cost || 0).toFixed(4)}`}>
-                    {tokens > 0 ? formatTokens(tokens) : '—'}
+                    {tokens > 0 ? (
+                      <div className="leading-tight">
+                        <div className="font-semibold">{formatTokens(tokens)}</div>
+                        <div className="opacity-70 text-[10px]">↓{formatTokens(outputTok)} ↑{formatTokens(inputTok)}</div>
+                        {cachedTok > 0 && <div className="opacity-60 text-[10px]">⚡{cachePct}%</div>}
+                      </div>
+                    ) : '—'}
                   </td>
                 )
               })}
