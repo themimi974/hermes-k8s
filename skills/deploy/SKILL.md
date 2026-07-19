@@ -294,6 +294,9 @@ Store credentials in:
 | LiteLLM model: `LLM Provider NOT provided` | Wrong provider prefix for custom APIs | Use `openai/` prefix for ANY OpenAI-compatible API (NVIDIA NIM, MiMo, vLLM, custom). See Pitfall 17. |
 | Friend pod: friend runs but can't make API calls | ConfigMap not created, or RBAC missing | Check dashboard-api logs for 403 errors; ensure ClusterRole `friend-manager` exists. See Pitfall 14. |
 | LiteLLM drops dashboard tables (CRITICAL) | LiteLLM Prisma migrations run on shared database | ALWAYS use separate databases: `hermes_dashboard` for dashboard, `litellm_db` for LiteLLM. See Pitfall 13. |
+| Usage tab: `password authentication failed for user "REPLACE_ME"` | Usage endpoint has hardcoded `***` password or wrong DB name | Fix `_get_litellm_db()` in `usage.py` to use `settings.postgres_password` and database `litellm_db`. See Pitfall 27. |
+| Usage tab: `relation "litellm_spendlogs" does not exist` | Prisma table names are mixed-case, unquoted references are lowercased | Quote ALL Prisma table names: `"LiteLLM_SpendLogs"`, `"LiteLLM_VerificationToken"`. See Pitfall 28. |
+| Usage tab: `column "spend" is ambiguous` | JOIN query references column without table alias | Prefix with `s.` for SpendLogs alias: `s.spend`, `s.total_tokens`. See Pitfall 28. |
 
 **Note on authentication:** This repo does NOT deploy auth middleware for single-node LAN use. Dashboard, LiteLLM, and gateway are accessible without authentication on the local network. This is a deliberate design choice — the network boundary (LAN + no port forwarding) is sufficient for a single friend group. For public-facing deploys, add per-namespace basicAuth middleware.
 

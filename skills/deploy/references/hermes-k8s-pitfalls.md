@@ -526,6 +526,100 @@ git push origin main
 
 **Note:** The SSH key must be added to the user's GitHub account (Settings → SSH keys).
 
+## Pitfall 27: Usage Endpoint DB Connection — Hardcoded Password and Wrong DB Name
+
+The `_get_litellm_db()` function in `dashboard/api/routers/usage.py` may have three bugs:
+1. Hardcoded `***` literal instead of `settings.postgres_password`
+2. Wrong database name (`litellm` instead of `litellm_db`)
+3. Unquoted Prisma-created table/column names (see Pitfall 28)
+
+**Symptom:** Usage tab shows `LiteLLM DB not ready: (psycopg2.OperationalError) ... password authentication failed for user "REPLACE_ME"`.
+
+**Fix — update `_get_litellm_db()` in `usage.py`:**
+```python
+def _get_litellm_db():
+    """Connect to the LiteLLM database (separate DB)."""
+    url = (
+        f"postgresql://{settings.postgres_user}:{settings.postgres_password}"
+        f"@{settings.postgres_host}:{settings.postgres_port}/litellm_db"
+    )
+    return create_engine(url, pool_pre_ping=True)
+```
+
+**Key points:**
+- Use `settings.postgres_password` (from env var), NOT hardcoded `***`
+- Database name must be `litellm_db` (the separate LiteLLM database), NOT `litellm`
+- Also update `LITELLM_DB_URL` constant at module level if it exists
+
+**Verify:**
+```python
+# Test connection from inside dashboard-api pod
+kubectl exec -n dashboard deployment/dashboard-api -- python3 -c "
+from routers.usage import _get_litellm_db
+engine = _get_litellm_db()
+print(f'URL: {engine.url}')
+with engine.connect() as conn:
+    result = conn.execute(text('SELECT 1'))
+    print(f'Connection OK: {result.fetchone()}')
+"
+```
+
+## Pitfall 28: Prisma Table/Column Names Require Quoting in PostgreSQL
+
+Prisma creates tables with mixed-case names (e.g., `LiteLLM_SpendLogs`, `LiteLLM_VerificationToken`) using quoted identifiers. PostgreSQL stores them case-sensitively, but **unquoted SQL references are lowercased** — causing `relation "litellm_spendlogs" does not exist` errors.
+
+**Affected tables:**
+- `LiteLLM_SpendLogs` (NOT `litellm_spendlogs`)
+- `LiteLLM_VerificationToken` (NOT `litellm_verificationtokens` — also note: singular, not plural)
+- Any other Prisma-created tables
+
+**Affected columns:**
+- `startTime` (NOT `starttime` or `created_at`)
+- `key_alias` (NOT `api_key_name`)
+- Other mixed-case columns
+
+**Symptom:** `psycopg2.errors.UndefinedTable: relation "litellm_spendlogs" does not exist` even though the table exists.
+
+**Fix — quote ALL Prisma table and column names in SQL:**
+```sql
+-- WRONG (lowercased by PostgreSQL)
+SELECT * FROM LiteLLM_SpendLogs WHERE created_at > NOW();
+
+-- CORRECT (quoted preserves case)
+SELECT * FROM "LiteLLM_SpendLogs" WHERE "startTime" > NOW();
+```
+
+**For JOIN queries, also prefix ambiguous columns:**
+```sql
+-- WRONG (ambiguous — both tables have 'spend' column)
+SELECT spend FROM "LiteLLM_SpendLogs" s
+LEFT JOIN "LiteLLM_VerificationToken" k ON s.api_key = k.token;
+
+-- CORRECT (use table alias)
+SELECT s.spend FROM "LiteLLM_SpendLogs" s
+LEFT JOIN "LiteLLM_VerificationToken" k ON s.api_key = k.token;
+```
+
+**Complete fix for usage.py:**
+```python
+# Table names — ALWAYS quote
+FROM "LiteLLM_SpendLogs"
+JOIN "LiteLLM_VerificationToken"
+
+# Column names — ALWAYS quote mixed-case
+WHERE "startTime" > NOW()
+
+# Ambiguous columns in JOINs — ALWAYS prefix with alias
+SELECT s.spend, s.total_tokens
+```
+
+**Verify table/column names from psql:**
+```bash
+PG_USER=$(kubectl get secret postgres-credentials -n dashboard -o jsonpath='{.data.POSTGRES_USER}' | base64 -d)
+kubectl exec -n dashboard deployment/postgresql -- psql -U "$PG_USER" -d litellm_db -c "\dt"  # list tables
+kubectl exec -n dashboard deployment/postgresql -- psql -U "$PG_USER" -d litellm_db -c "\d \"LiteLLM_SpendLogs\""  # list columns
+```
+
 ## Reference Files
 
 - `references/deployment-checklist.md` — Quick-reference post-deploy verification checklist
