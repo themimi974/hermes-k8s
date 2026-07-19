@@ -564,7 +564,38 @@ with engine.connect() as conn:
 "
 ```
 
-## Pitfall 28: Prisma Table/Column Names Require Quoting in PostgreSQL
+## Pitfall 28: LiteLLM Virtual Keys Missing key_alias Shows "unknown" in Usage
+
+When creating LiteLLM virtual keys, the `key_alias` field must be set to the friend's name. Without it, the `LiteLLM_VerificationToken.key_alias` is NULL, and the Usage dashboard shows "unknown" for that friend because the JOIN `SpendLogs.api_key = VerificationToken.token` returns NULL alias.
+
+**Symptom:** Usage tab shows "unknown" friend with token usage, but the actual friend name is missing.
+
+**Fix — always set key_alias when creating keys:**
+```python
+payload = {
+    "key_name": f"friend-{friend_name}",
+    "key_alias": friend_name,  # REQUIRED for Usage tracking
+    "models": models,
+    ...
+}
+```
+
+**Fix existing keys without key_alias:**
+```bash
+# Get the friend's token hash from dashboard DB
+PG_USER=$(kubectl get secret postgres-credentials -n dashboard -o jsonpath='{.data.POSTGRES_USER}' | base64 -d)
+TOKEN_HASH=$(kubectl exec -n dashboard deployment/postgresql -- psql -U "$PG_USER" -d hermes_dashboard -t -A -c "SELECT litellm_key_hash FROM friends WHERE name='FRIEND_NAME';")
+
+# Update key_alias via LiteLLM API
+curl -sk https://litellm.EXAMPLE.COM/key/update \
+  -H "Authorization: Bearer $MASTER_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"key\":\"$TOKEN_HASH\",\"key_alias\":\"FRIEND_NAME\"}"
+```
+
+**Note:** Old SpendLogs entries from deleted keys will permanently show as "unknown" — there's no way to retroactively resolve them since the key no longer exists in VerificationToken.
+
+## Pitfall 29: Prisma Table/Column Names Require Quoting in PostgreSQL
 
 Prisma creates tables with mixed-case names (e.g., `LiteLLM_SpendLogs`, `LiteLLM_VerificationToken`) using quoted identifiers. PostgreSQL stores them case-sensitively, but **unquoted SQL references are lowercased** — causing `relation "litellm_spendlogs" does not exist` errors.
 
