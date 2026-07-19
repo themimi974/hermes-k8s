@@ -58,6 +58,7 @@ def generate_config(models: list[ModelRecord]) -> str:
         "model_list": model_list,
         "general_settings": {
             "master_key": "os.environ/LITELLM_MASTER_KEY",
+            "database_url": "os.environ/DATABASE_URL",
         },
         "litellm_settings": {
             "drop_params": True,
