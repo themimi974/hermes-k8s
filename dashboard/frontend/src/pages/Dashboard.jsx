@@ -50,6 +50,19 @@ function FriendCard({ friend, onSave, onRestore, onDelete, domain }) {
             {friend.name}.{domain}
           </a>
         </div>
+        {friend.budget_groups?.length > 0 && (
+          <div className="flex items-start">
+            <span className="text-gray-500 w-20 mt-1">Groups:</span>
+            <div className="flex flex-wrap gap-1">
+              {friend.budget_groups.map(g => (
+                <Link key={g} to="/budget-groups"
+                      className="bg-blue-900/50 text-blue-300 text-xs px-2 py-0.5 rounded hover:bg-blue-800/50">
+                  {g}
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
       
       <div className="flex space-x-2 pt-4 border-t border-gray-700">

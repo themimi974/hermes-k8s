@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 
 const API_BASE = '/api'
@@ -8,14 +8,31 @@ function NewFriend() {
   const [formData, setFormData] = useState({
     name: '',
     username: '',
-    password: ''
+    password: '',
   })
+  const [availableGroups, setAvailableGroups] = useState([])
+  const [selectedGroups, setSelectedGroups] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+
+  useEffect(() => {
+    fetch(`${API_BASE}/budget-groups`)
+      .then(r => r.json())
+      .then(data => setAvailableGroups(Array.isArray(data) ? data : []))
+      .catch(() => {})
+  }, [])
 
   const handleChange = (e) => {
     const { name, value } = e.target
     setFormData(prev => ({ ...prev, [name]: value }))
+  }
+
+  const toggleGroup = (groupId) => {
+    setSelectedGroups(prev =>
+      prev.includes(groupId)
+        ? prev.filter(id => id !== groupId)
+        : [...prev, groupId]
+    )
   }
 
   const handleSubmit = async (e) => {
@@ -24,16 +41,26 @@ function NewFriend() {
     setError(null)
 
     try {
+      // 1. Create friend
       const response = await fetch(`${API_BASE}/friends`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify(formData)
+        body: JSON.stringify(formData),
       })
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}))
         throw new Error(errorData.detail || 'Failed to create friend')
+      }
+
+      // 2. Assign budget groups (if any selected)
+      if (selectedGroups.length > 0) {
+        await fetch(`${API_BASE}/friends/${formData.name}/groups`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ group_ids: selectedGroups }),
+        })
       }
 
       navigate(`/friends/${formData.name}`)
@@ -49,16 +76,16 @@ function NewFriend() {
       <Link to="/" className="text-blue-400 hover:text-blue-300 mb-6 inline-block">
         ← Back to Dashboard
       </Link>
-      
+
       <div className="bg-gray-800 rounded-xl shadow-xl border border-gray-700 p-8">
         <h1 className="text-2xl font-bold text-white mb-6">Create New Friend</h1>
-        
+
         {error && (
           <div className="bg-red-900/50 border border-red-500 text-red-200 px-4 py-3 rounded-lg mb-6">
             {error}
           </div>
         )}
-        
+
         <form onSubmit={handleSubmit} className="space-y-6">
           <div>
             <label htmlFor="name" className="block text-sm font-medium text-gray-300 mb-2">
@@ -80,7 +107,7 @@ function NewFriend() {
               Lowercase letters, numbers, and hyphens only. This will be your subdomain.
             </p>
           </div>
-          
+
           <div>
             <label htmlFor="username" className="block text-sm font-medium text-gray-300 mb-2">
               Username *
@@ -96,7 +123,7 @@ function NewFriend() {
               placeholder="admin"
             />
           </div>
-          
+
           <div>
             <label htmlFor="password" className="block text-sm font-medium text-gray-300 mb-2">
               Password *
@@ -116,7 +143,59 @@ function NewFriend() {
               Minimum 8 characters
             </p>
           </div>
-          
+
+          {/* Budget Groups */}
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Budget Groups
+            </label>
+            <p className="text-xs text-gray-500 mb-2">
+              Optional — assign groups to give this friend access to specific models and limits.
+            </p>
+            {availableGroups.length === 0 ? (
+              <p className="text-gray-500 text-sm">
+                No groups yet.{' '}
+                <Link to="/budget-groups" className="text-blue-400 hover:underline">Create one first</Link>{' '}
+                or skip for now.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {availableGroups.map(group => (
+                  <label
+                    key={group.id}
+                    className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                      selectedGroups.includes(group.id)
+                        ? 'bg-blue-900/30 border-blue-600'
+                        : 'bg-gray-700 border-gray-600 hover:border-gray-500'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedGroups.includes(group.id)}
+                      onChange={() => toggleGroup(group.id)}
+                      className="rounded"
+                    />
+                    <div className="flex-1">
+                      <span className="text-white font-medium text-sm">{group.name}</span>
+                      {group.description && (
+                        <span className="text-gray-400 text-xs ml-2">— {group.description}</span>
+                      )}
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {(group.models || []).map(m => (
+                          <span key={m} className="bg-gray-600 text-gray-300 text-xs px-1.5 py-0.5 rounded">{m}</span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="text-right text-xs text-gray-400">
+                      <div>${group.max_budget}/{group.budget_duration}</div>
+                      <div>{group.friend_count} friend{group.friend_count !== 1 ? 's' : ''}</div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+
           <button
             type="submit"
             disabled={loading}
@@ -131,7 +210,7 @@ function NewFriend() {
                 Creating...
               </span>
             ) : (
-              '🤖 Create Friend'
+              '🤖 Create Friend' + (selectedGroups.length > 0 ? ` (${selectedGroups.length} group${selectedGroups.length > 1 ? 's' : ''})` : '')
             )}
           </button>
         </form>
