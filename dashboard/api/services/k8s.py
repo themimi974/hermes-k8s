@@ -267,40 +267,81 @@ memory:
 
 
 def create_hermes_configmap(ns: str, model_name: str, litellm_key: str) -> None:
-    """Create ConfigMap containing hermes config.yaml pointing at LiteLLM.
+    """Write hermes config.yaml to the friend's PVC at /root/.hermes/.
 
-    The config mounts into the friend pod at /root/.hermes/config.yaml
-    so Hermes uses the friend's LiteLLM key instead of direct API access.
+    The PVC is mounted at /root/.hermes so the config is writable.
+    We exec into a busybox pod to write the file.
     """
     config_content = _build_hermes_config(model_name, litellm_key)
-    body = client.V1ConfigMap(
-        metadata=client.V1ObjectMeta(name="hermes-config", namespace=ns),
-        data={"config.yaml": config_content},
-    )
-    try:
-        v1.create_namespaced_config_map(namespace=ns, body=body)
-        logger.info(f"Created hermes-config ConfigMap in {ns}")
-    except client.exceptions.ApiException as e:
-        if e.status == 409:
-            # Already exists — update it
-            update_hermes_configmap(ns, model_name, litellm_key)
-        else:
-            raise
+    _write_config_to_pvc(ns, config_content)
 
 
 def update_hermes_configmap(ns: str, model_name: str, litellm_key: str) -> None:
-    """Update existing hermes-config ConfigMap with new settings."""
+    """Update hermes config.yaml in the friend's PVC."""
     config_content = _build_hermes_config(model_name, litellm_key)
-    body = {"data": {"config.yaml": config_content}}
+    _write_config_to_pvc(ns, config_content)
+
+
+def _write_config_to_pvc(ns: str, config_content: str) -> None:
+    """Write config content to /root/.hermes/config.yaml in the friend's PVC.
+
+    Uses a Job to write the file since we can't exec into running pods
+    from the dashboard API.
+    """
+    import uuid
+    job_name = f"write-config-{uuid.uuid4().hex[:8]}"
+
+    # Escape config for shell
+    escaped = config_content.replace("'", "'\''")
+
+    body = client.V1Job(
+        metadata=client.V1ObjectMeta(name=job_name, namespace=ns),
+        spec=client.V1JobSpec(
+            backoff_limit=1,
+            template=client.V1PodTemplateSpec(
+                spec=client.V1PodSpec(
+                    restart_policy="Never",
+                    containers=[
+                        client.V1Container(
+                            name="writer",
+                            image="busybox:latest",
+                            command=["sh", "-c"],
+                            args=[f"mkdir -p /root/.hermes && cat > /root/.hermes/config.yaml << '''ENDCONFIG'\''\n{escaped}\nENDCONFIG"],
+                            volume_mounts=[
+                                client.V1VolumeMount(
+                                    name="friends-data",
+                                    mount_path="/root/.hermes",
+                                )
+                            ],
+                        )
+                    ],
+                    volumes=[
+                        client.V1Volume(
+                            name="friends-data",
+                            persistent_volume_claim=client.V1PersistentVolumeClaimVolumeSource(
+                                claim_name="friend-data",
+                            ),
+                        )
+                    ],
+                ),
+            ),
+        ),
+    )
+
     try:
-        v1.patch_namespaced_config_map(name="hermes-config", namespace=ns, body=body)
-        logger.info(f"Updated hermes-config ConfigMap in {ns}")
+        batch_v1.create_namespaced_job(namespace=ns, body=body)
+        logger.info(f"Created config writer job {job_name} in {ns}")
     except client.exceptions.ApiException as e:
-        if e.status == 404:
-            # Doesn't exist — create it
-            create_hermes_configmap(ns, model_name, litellm_key)
+        if e.status == 409:
+            # Job already exists — delete and recreate
+            try:
+                batch_v1.delete_namespaced_job(name=job_name, namespace=ns)
+                batch_v1.create_namespaced_job(namespace=ns, body=body)
+                logger.info(f"Recreated config writer job {job_name} in {ns}")
+            except Exception as e2:
+                logger.warning(f"Failed to recreate config writer job: {e2}")
         else:
-            raise
+            logger.warning(f"Failed to create config writer job: {e}")
 
 
 def create_litellm_secret(ns: str, litellm_key: str) -> None:
