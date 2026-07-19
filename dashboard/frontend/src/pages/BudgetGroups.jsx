@@ -35,7 +35,7 @@ export default function BudgetGroups() {
     try {
       const res = await fetch(`${API}/models/`)
       const data = await res.json()
-      setAvailableModels(Array.isArray(data) ? data.filter(m => m.enabled) : [])
+      setAvailableModels(Array.isArray(data) ? data : [])
     } catch (e) {
       console.error('Failed to fetch models:', e)
     }
@@ -89,7 +89,7 @@ export default function BudgetGroups() {
     setShowCreate(true)
   }
 
-  const modelOptions = availableModels.map(m => ({ id: m.model_id, name: m.name, context: m.context_length }))
+  const modelOptions = availableModels.map(m => ({ id: m.model_id, name: m.name, context: m.context_length, enabled: m.enabled }))
 
   return (
     <div>
@@ -229,7 +229,7 @@ export default function BudgetGroups() {
                 ) : (
                   <div className="flex flex-wrap gap-2">
                     {modelOptions.map((m) => (
-                      <label key={m.id} className="flex items-center gap-1 text-sm text-gray-300 bg-gray-700 rounded px-2 py-1">
+                      <label key={m.id} className={`flex items-center gap-1 text-sm bg-gray-700 rounded px-2 py-1 ${m.enabled ? 'text-gray-300' : 'text-gray-500 opacity-60'}`}>
                         <input
                           type="checkbox"
                           checked={form.models.includes(m.id)}
@@ -242,8 +242,9 @@ export default function BudgetGroups() {
                           }}
                           className="rounded"
                         />
-                        <span>{m.name}</span>
+                        <span className={m.enabled ? '' : 'line-through'}>{m.name}</span>
                         <span className="text-gray-500 text-xs">({(m.context / 1000).toFixed(0)}k)</span>
+                        {!m.enabled && <span className="text-red-400 text-xs">off</span>}
                       </label>
                     ))}
                   </div>

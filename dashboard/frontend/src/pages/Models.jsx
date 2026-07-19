@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 
 const API = '/api'
 
-function ModelCard({ model, onEdit, onDelete, onTest }) {
+function ModelCard({ model, onEdit, onDelete, onTest, onToggle }) {
   const [testing, setTesting] = useState(null)
 
   const handleTest = async () => {
@@ -75,6 +75,16 @@ function ModelCard({ model, onEdit, onDelete, onTest }) {
           className="flex-1 bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-lg text-sm font-medium transition-colors"
         >
           🗑️ Delete
+        </button>
+        <button
+          onClick={() => onToggle(model)}
+          className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+            model.enabled
+              ? 'bg-green-600 hover:bg-green-700 text-white'
+              : 'bg-gray-600 hover:bg-gray-500 text-gray-300'
+          }`}
+        >
+          {model.enabled ? '🟢 On' : '🔴 Off'}
         </button>
       </div>
     </div>
@@ -243,6 +253,19 @@ function Models() {
     }
   }
 
+  const handleToggle = async (model) => {
+    try {
+      await fetch(`${API}/models/${model.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: !model.enabled }),
+      })
+      await fetchModels()
+    } catch (err) {
+      alert(`Error: ${err.message}`)
+    }
+  }
+
   const handleSave = () => {
     setShowForm(false)
     setEditModel(null)
@@ -291,6 +314,7 @@ function Models() {
               model={model}
               onEdit={(m) => { setEditModel(m); setShowForm(true) }}
               onDelete={handleDelete}
+              onToggle={handleToggle}
             />
           ))}
         </div>
