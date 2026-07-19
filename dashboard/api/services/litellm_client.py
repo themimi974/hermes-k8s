@@ -35,6 +35,7 @@ async def create_virtual_key(
     """
     payload = {
         "key_name": f"friend-{friend_name}",
+        "key_alias": friend_name,
         "models": models,
         "tpm_limit": tpm_limit,
         "rpm_limit": rpm_limit,
@@ -96,6 +97,7 @@ async def update_virtual_key(
     rpm_limit: Optional[int] = None,
     max_budget: Optional[float] = None,
     budget_duration: Optional[str] = None,
+    key_alias: Optional[str] = None,
 ) -> bool:
     """Update a LiteLLM virtual key."""
     if not token:
@@ -112,6 +114,8 @@ async def update_virtual_key(
         payload["max_budget"] = max_budget
     if budget_duration is not None:
         payload["budget_duration"] = budget_duration
+    if key_alias is not None:
+        payload["key_alias"] = key_alias
 
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.post(
@@ -173,6 +177,7 @@ async def refresh_key(
                 rpm_limit=rpm_limit,
                 max_budget=max_budget,
                 budget_duration=budget_duration,
+                key_alias=friend_name,
             )
             return {"key": old_key, "was_refreshed": False}
         else:
