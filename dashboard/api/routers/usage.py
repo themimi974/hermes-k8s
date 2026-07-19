@@ -14,7 +14,7 @@ from config import settings
 router = APIRouter(prefix="/api/usage", tags=["usage"])
 
 LITELLM_DB_URL = (
-    f"postgresql://{settings.postgres_user}:***@{settings.postgres_host}:{settings.postgres_port}/litellm"
+    f"postgresql://{settings.postgres_user}:{settings.postgres_password}@{settings.postgres_host}:{settings.postgres_port}/litellm_db"
 )
 
 # Valid period aliases
@@ -30,8 +30,8 @@ INTERVAL_MAP = {
 def _get_litellm_db():
     """Connect to the LiteLLM database (separate DB)."""
     url = (
-        f"postgresql://{settings.postgres_user}:***@{settings.postgres_host}"
-        f":{settings.postgres_port}/litellm"
+        f"postgresql://{settings.postgres_user}:{settings.postgres_password}@{settings.postgres_host}"
+        f":{settings.postgres_port}/litellm_db"
     )
     return create_engine(url, pool_pre_ping=True)
 
@@ -56,8 +56,8 @@ async def get_usage(period: str = Query("24h", pattern=r"^(1h|6h|24h|7d|30d)$"))
                     COUNT(*) as total_requests,
                     COALESCE(SUM(CAST(total_tokens AS BIGINT)), 0) as total_tokens,
                     COALESCE(SUM(CAST(spend AS NUMERIC)), 0) as total_cost
-                FROM LiteLLM_SpendLogs
-                WHERE created_at > NOW() - INTERVAL :interval
+                FROM "LiteLLM_SpendLogs"
+                WHERE "startTime" > NOW() - INTERVAL :interval
             """), {"interval": interval})
             row = result.fetchone()
             total_requests = row[0] if row else 0
@@ -69,8 +69,8 @@ async def get_usage(period: str = Query("24h", pattern=r"^(1h|6h|24h|7d|30d)$"))
                 SELECT model, COUNT(*) as requests,
                        COALESCE(SUM(CAST(total_tokens AS BIGINT)), 0) as tokens,
                        COALESCE(SUM(CAST(spend AS NUMERIC)), 0) as cost
-                FROM LiteLLM_SpendLogs
-                WHERE created_at > NOW() - INTERVAL :interval
+                FROM "LiteLLM_SpendLogs"
+                WHERE "startTime" > NOW() - INTERVAL :interval
                 GROUP BY model
                 ORDER BY requests DESC
             """), {"interval": interval})
@@ -84,14 +84,14 @@ async def get_usage(period: str = Query("24h", pattern=r"^(1h|6h|24h|7d|30d)$"))
 
             # By friend (API key)
             result = conn.execute(text("""
-                SELECT k.api_key_name,
+                SELECT k.key_alias,
                        COUNT(*) as requests,
-                       COALESCE(SUM(CAST(total_tokens AS BIGINT)), 0) as tokens,
-                       COALESCE(SUM(CAST(spend AS NUMERIC)), 0) as cost
-                FROM LiteLLM_SpendLogs s
-                LEFT JOIN LiteLLM_VerificationTokens k ON s.api_key = k.token
-                WHERE s.created_at > NOW() - INTERVAL :interval
-                GROUP BY k.api_key_name
+                       COALESCE(SUM(CAST(s.total_tokens AS BIGINT)), 0) as tokens,
+                       COALESCE(SUM(CAST(s.spend AS NUMERIC)), 0) as cost
+                FROM "LiteLLM_SpendLogs" s
+                LEFT JOIN "LiteLLM_VerificationToken" k ON s.api_key = k.token
+                WHERE s."startTime" > NOW() - INTERVAL :interval
+                GROUP BY k.key_alias
                 ORDER BY requests DESC
                 LIMIT 50
             """), {"interval": interval})
@@ -136,17 +136,17 @@ async def usage_by_friends(period: str = Query("24h", pattern=r"^(1h|6h|24h|7d|3
         interval = _safe_interval(period)
         with engine.connect() as conn:
             result = conn.execute(text("""
-                SELECT k.api_key_name,
+                SELECT k.key_alias,
                        COUNT(*) as requests,
-                       COALESCE(SUM(CAST(total_tokens AS BIGINT)), 0) as tokens,
-                       COALESCE(SUM(CAST(spend AS NUMERIC)), 0) as cost,
-                       MIN(s.created_at) as first_seen,
-                       MAX(s.created_at) as last_seen
-                FROM LiteLLM_SpendLogs s
-                LEFT JOIN LiteLLM_VerificationTokens k ON s.api_key = k.token
-                WHERE s.created_at > NOW() - INTERVAL :interval
-                  AND k.api_key_name IS NOT NULL
-                GROUP BY k.api_key_name
+                       COALESCE(SUM(CAST(s.total_tokens AS BIGINT)), 0) as tokens,
+                       COALESCE(SUM(CAST(s.spend AS NUMERIC)), 0) as cost,
+                       MIN(s."startTime") as first_seen,
+                       MAX(s."startTime") as last_seen
+                FROM "LiteLLM_SpendLogs" s
+                LEFT JOIN "LiteLLM_VerificationToken" k ON s.api_key = k.token
+                WHERE s."startTime" > NOW() - INTERVAL :interval
+                  AND k.key_alias IS NOT NULL
+                GROUP BY k.key_alias
                 ORDER BY tokens DESC
             """), {"interval": interval})
 
@@ -192,12 +192,12 @@ async def usage_for_friend(
             # Total for this friend
             result = conn.execute(text(f"""
                 SELECT COUNT(*) as requests,
-                       COALESCE(SUM(CAST(total_tokens AS BIGINT)), 0) as tokens,
-                       COALESCE(SUM(CAST(spend AS NUMERIC)), 0) as cost
-                FROM LiteLLM_SpendLogs s
-                JOIN LiteLLM_VerificationTokens k ON s.api_key = k.token
-                WHERE k.api_key_name IN ({placeholders})
-                  AND s.created_at > NOW() - INTERVAL :interval
+                       COALESCE(SUM(CAST(s.total_tokens AS BIGINT)), 0) as tokens,
+                       COALESCE(SUM(CAST(s.spend AS NUMERIC)), 0) as cost
+                FROM "LiteLLM_SpendLogs" s
+                JOIN "LiteLLM_VerificationToken" k ON s.api_key = k.token
+                WHERE k.key_alias IN ({placeholders})
+                  AND s."startTime" > NOW() - INTERVAL :interval
             """), params)
             row = result.fetchone()
             total = {
@@ -212,10 +212,10 @@ async def usage_for_friend(
                        COUNT(*) as requests,
                        COALESCE(SUM(CAST(s.total_tokens AS BIGINT)), 0) as tokens,
                        COALESCE(SUM(CAST(s.spend AS NUMERIC)), 0) as cost
-                FROM LiteLLM_SpendLogs s
-                JOIN LiteLLM_VerificationTokens k ON s.api_key = k.token
-                WHERE k.api_key_name IN ({placeholders})
-                  AND s.created_at > NOW() - INTERVAL :interval
+                FROM "LiteLLM_SpendLogs" s
+                JOIN "LiteLLM_VerificationToken" k ON s.api_key = k.token
+                WHERE k.key_alias IN ({placeholders})
+                  AND s."startTime" > NOW() - INTERVAL :interval
                 GROUP BY s.model
                 ORDER BY tokens DESC
             """), params)
@@ -260,12 +260,12 @@ async def usage_by_models(period: str = Query("24h", pattern=r"^(1h|6h|24h|7d|30
             result = conn.execute(text("""
                 SELECT model,
                        COUNT(*) as requests,
-                       COALESCE(SUM(CAST(total_tokens AS BIGINT)), 0) as tokens,
-                       COALESCE(SUM(CAST(spend AS NUMERIC)), 0) as cost,
-                       MIN(created_at) as first_used,
-                       MAX(created_at) as last_used
-                FROM LiteLLM_SpendLogs
-                WHERE created_at > NOW() - INTERVAL :interval
+                       COALESCE(SUM(CAST(s.total_tokens AS BIGINT)), 0) as tokens,
+                       COALESCE(SUM(CAST(s.spend AS NUMERIC)), 0) as cost,
+                       MIN("startTime") as first_used,
+                       MAX("startTime") as last_used
+                FROM "LiteLLM_SpendLogs"
+                WHERE "startTime" > NOW() - INTERVAL :interval
                 GROUP BY model
                 ORDER BY tokens DESC
             """), {"interval": interval})
@@ -302,9 +302,9 @@ async def usage_for_model(
                 SELECT COUNT(*) as requests,
                        COALESCE(SUM(CAST(total_tokens AS BIGINT)), 0) as tokens,
                        COALESCE(SUM(CAST(spend AS NUMERIC)), 0) as cost
-                FROM LiteLLM_SpendLogs
+                FROM "LiteLLM_SpendLogs"
                 WHERE model = :model
-                  AND created_at > NOW() - INTERVAL :interval
+                  AND "startTime" > NOW() - INTERVAL :interval
             """), {"model": model_id, "interval": interval})
             row = result.fetchone()
             total = {
@@ -315,15 +315,15 @@ async def usage_for_model(
 
             # Per-friend breakdown for this model
             result = conn.execute(text("""
-                SELECT k.api_key_name,
+                SELECT k.key_alias,
                        COUNT(*) as requests,
                        COALESCE(SUM(CAST(s.total_tokens AS BIGINT)), 0) as tokens,
                        COALESCE(SUM(CAST(s.spend AS NUMERIC)), 0) as cost
-                FROM LiteLLM_SpendLogs s
-                LEFT JOIN LiteLLM_VerificationTokens k ON s.api_key = k.token
+                FROM "LiteLLM_SpendLogs" s
+                LEFT JOIN "LiteLLM_VerificationToken" k ON s.api_key = k.token
                 WHERE s.model = :model
-                  AND s.created_at > NOW() - INTERVAL :interval
-                GROUP BY k.api_key_name
+                  AND s."startTime" > NOW() - INTERVAL :interval
+                GROUP BY k.key_alias
                 ORDER BY tokens DESC
             """), {"model": model_id, "interval": interval})
 
@@ -374,15 +374,15 @@ async def usage_matrix(period: str = Query("24h", pattern=r"^(1h|6h|24h|7d|30d)$
         interval = _safe_interval(period)
         with engine.connect() as conn:
             result = conn.execute(text("""
-                SELECT k.api_key_name, s.model,
+                SELECT k.key_alias, s.model,
                        COUNT(*) as requests,
                        COALESCE(SUM(CAST(s.total_tokens AS BIGINT)), 0) as tokens,
                        COALESCE(SUM(CAST(s.spend AS NUMERIC)), 0) as cost
-                FROM LiteLLM_SpendLogs s
-                LEFT JOIN LiteLLM_VerificationTokens k ON s.api_key = k.token
-                WHERE s.created_at > NOW() - INTERVAL :interval
-                GROUP BY k.api_key_name, s.model
-                ORDER BY k.api_key_name, tokens DESC
+                FROM "LiteLLM_SpendLogs" s
+                LEFT JOIN "LiteLLM_VerificationToken" k ON s.api_key = k.token
+                WHERE s."startTime" > NOW() - INTERVAL :interval
+                GROUP BY k.key_alias, s.model
+                ORDER BY k.key_alias, tokens DESC
             """), {"interval": interval})
 
             friends_set = set()
