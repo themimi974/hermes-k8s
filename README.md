@@ -51,9 +51,20 @@ Once Hermes is running, tell it: **"deploy hermes-k8s"** — it will read the de
 
 | Component | URL | Description |
 |-----------|-----|-------------|
-| Dashboard | `https://dashboard.domain.com` | Manage friends, budget groups, usage |
+| Dashboard | `https://dashboard.domain.com` | Manage friends, budget groups, usage analytics |
 | LiteLLM | `https://litellm.domain.com` | LLM API gateway with per-user keys |
 | Friends | `https://<name>.domain.com` | Individual terminal shells |
+
+### Usage Analytics
+
+The dashboard tracks per-friend, per-model usage with detailed token breakdown:
+
+- **Input tokens** — prompt tokens sent to the model
+- **Output tokens** — completion tokens generated
+- **Cached tokens** — prompt tokens served from cache (saves cost)
+- **Cache hit %** — `cached / input × 100` (shown in Matrix tab)
+
+All data comes from LiteLLM's `SpendLogs` table — no additional logging needed.
 
 ## Stack
 
@@ -193,8 +204,12 @@ PUT    /api/budget-groups/{id}              → update group
 DELETE /api/budget-groups/{id}              → delete group
 
 # Usage
-GET    /api/usage                           → usage stats
-GET    /api/usage/models                    → list models
+GET    /api/usage                           → global overview (input/output/cached tokens)
+GET    /api/usage/friends                   → per-friend breakdown
+GET    /api/usage/friends/{name}            → per-friend by model
+GET    /api/usage/models                    → per-model breakdown
+GET    /api/usage/models/{model_id}         → per-model by friend
+GET    /api/usage/matrix                    → friend × model matrix with cache hit %
 ```
 
 ---

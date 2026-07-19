@@ -1,7 +1,7 @@
 ---
 name: hermes-k8s-deploy
 description: "Deploy and manage hermes-k8s — per-user isolated Hermes Agent subdomains with LiteLLM gateway and local LLM."
-version: 1.7.0
+version: 1.8.0
 author: hermes-k8s
 platforms: [linux]
 metadata:
@@ -298,6 +298,8 @@ Store credentials in:
 | Usage tab: `relation "litellm_spendlogs" does not exist` | Prisma table names are mixed-case, unquoted references are lowercased | Quote ALL Prisma table names: `"LiteLLM_SpendLogs"`, `"LiteLLM_VerificationToken"`. See Pitfall 28. |
 | Usage tab: `column "spend" is ambiguous` | JOIN query references column without table alias | Prefix with `s.` for SpendLogs alias: `s.spend`, `s.total_tokens`. See Pitfall 29. |
 | Usage tab shows "unknown" for all friends | Virtual keys missing `key_alias` field | Set `key_alias=friend_name` when creating keys. See Pitfall 28. |
+| Usage tab: "By Model" shows nothing | SQL query uses `s.` prefix without JOIN alias | Remove `s.` prefix for single-table queries. Fixed in v1.8.0. |
+| Matrix tab shows only total tokens | Frontend not rendering input/output/cached breakdown | Rebuild frontend after v1.8.0 — matrix now shows ↓output ↑input and ⚡cache_hit%. |
 
 **Note on authentication:** This repo does NOT deploy auth middleware for single-node LAN use. Dashboard, LiteLLM, and gateway are accessible without authentication on the local network. This is a deliberate design choice — the network boundary (LAN + no port forwarding) is sufficient for a single friend group. For public-facing deploys, add per-namespace basicAuth middleware.
 
