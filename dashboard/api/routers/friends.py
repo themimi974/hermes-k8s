@@ -287,24 +287,42 @@ async def add_group(name: str, group_id: int):
             db.commit()
             db.refresh(friend)
 
-        # Re-merge and update LiteLLM key
+        # Re-merge and refresh/update LiteLLM key
         merged = merge_groups(friend.groups)
-        if friend.litellm_key:
-            await litellm_client.update_virtual_key(
-                token=friend.litellm_key,
-                models=merged["models"],
-                tpm_limit=merged["tpm_limit"],
-                rpm_limit=merged["rpm_limit"],
-                max_budget=merged["max_budget"],
-                budget_duration=merged["budget_duration"],
-            )
-            # Update hermes config + restart pod
-            await _update_friend_config(name, friend)
+        key_data = await litellm_client.refresh_key(
+            friend_name=name,
+            models=merged["models"],
+            old_key=friend.litellm_key,
+            tpm_limit=merged["tpm_limit"],
+            rpm_limit=merged["rpm_limit"],
+            max_budget=merged["max_budget"],
+            budget_duration=merged["budget_duration"],
+        )
+        new_key = key_data.get("key", friend.litellm_key)
+        was_refreshed = key_data.get("was_refreshed", False)
+        
+        # Update friend record if key was refreshed
+        if was_refreshed and new_key != friend.litellm_key:
+            db2 = SessionLocal()
+            try:
+                rec = db2.query(FriendRecord).filter(FriendRecord.name == name).first()
+                if rec:
+                    rec.litellm_key = new_key
+                    rec.litellm_key_hash = key_data.get("key_hash", "")
+                    db2.commit()
+            finally:
+                db2.close()
+            friend.litellm_key = new_key
+            logger.info(f"Refreshed LiteLLM key for '{name}'")
+
+        # Update hermes config + restart pod
+        await _update_friend_config(name, friend)
 
         return {
             "message": f"Added group '{group.name}' to friend '{name}'",
             "groups": [g.name for g in friend.groups],
             "merged": merged,
+            "key_refreshed": was_refreshed,
         }
     finally:
         db.close()
@@ -328,24 +346,42 @@ async def remove_group(name: str, group_id: int):
             db.commit()
             db.refresh(friend)
 
-        # Re-merge and update LiteLLM key
+        # Re-merge and refresh/update LiteLLM key
         merged = merge_groups(friend.groups)
-        if friend.litellm_key:
-            await litellm_client.update_virtual_key(
-                token=friend.litellm_key,
-                models=merged["models"],
-                tpm_limit=merged["tpm_limit"],
-                rpm_limit=merged["rpm_limit"],
-                max_budget=merged["max_budget"],
-                budget_duration=merged["budget_duration"],
-            )
-            # Update hermes config + restart pod
-            await _update_friend_config(name, friend)
+        key_data = await litellm_client.refresh_key(
+            friend_name=name,
+            models=merged["models"],
+            old_key=friend.litellm_key,
+            tpm_limit=merged["tpm_limit"],
+            rpm_limit=merged["rpm_limit"],
+            max_budget=merged["max_budget"],
+            budget_duration=merged["budget_duration"],
+        )
+        new_key = key_data.get("key", friend.litellm_key)
+        was_refreshed = key_data.get("was_refreshed", False)
+        
+        # Update friend record if key was refreshed
+        if was_refreshed and new_key != friend.litellm_key:
+            db2 = SessionLocal()
+            try:
+                rec = db2.query(FriendRecord).filter(FriendRecord.name == name).first()
+                if rec:
+                    rec.litellm_key = new_key
+                    rec.litellm_key_hash = key_data.get("key_hash", "")
+                    db2.commit()
+            finally:
+                db2.close()
+            friend.litellm_key = new_key
+            logger.info(f"Refreshed LiteLLM key for '{name}'")
+
+        # Update hermes config + restart pod
+        await _update_friend_config(name, friend)
 
         return {
-            "message": f"Removed group '{group.name}' from friend '{name}'",
+            "message": f"Updated groups for '{name}'",
             "groups": [g.name for g in friend.groups],
             "merged": merged,
+            "key_refreshed": was_refreshed,
         }
     finally:
         db.close()

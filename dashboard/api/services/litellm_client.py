@@ -126,6 +126,73 @@ async def update_virtual_key(
         return False
 
 
+async def validate_key(key: str) -> bool:
+    """Check if a virtual key exists and is valid in LiteLLM.
+
+    Returns True if the key is valid, False otherwise.
+    """
+    if not key:
+        return False
+
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(
+            f"{LITELLM_BASE}/key/info",
+            json={"key": key},
+            headers=HEADERS,
+        )
+        # Key exists if we get 200
+        if resp.status_code == 200:
+            return True
+        # 404 or other error means key doesn't exist
+        logger.warning(f"Key validation failed for {key[:12]}...: {resp.status_code}")
+        return False
+
+
+async def refresh_key(
+    friend_name: str,
+    models: list[str],
+    old_key: str = None,
+    tpm_limit: int = 100000,
+    rpm_limit: int = 1000,
+    max_budget: float = 50.0,
+    budget_duration: str = "30d",
+) -> dict:
+    """Refresh a virtual key: delete old one if invalid, create new one.
+
+    Returns dict with: key, token, key_hash, was_refreshed
+    """
+    # First try to update existing key
+    if old_key:
+        is_valid = await validate_key(old_key)
+        if is_valid:
+            # Key is valid, just update it
+            await update_virtual_key(
+                token=old_key,
+                models=models,
+                tpm_limit=tpm_limit,
+                rpm_limit=rpm_limit,
+                max_budget=max_budget,
+                budget_duration=budget_duration,
+            )
+            return {"key": old_key, "was_refreshed": False}
+        else:
+            # Key is stale, delete it (ignore errors)
+            await delete_virtual_key(old_key)
+            logger.info(f"Deleted stale key for '{friend_name}'")
+
+    # Create new key
+    key_data = await create_virtual_key(
+        friend_name=friend_name,
+        models=models,
+        tpm_limit=tpm_limit,
+        rpm_limit=rpm_limit,
+        max_budget=max_budget,
+        budget_duration=budget_duration,
+    )
+    key_data["was_refreshed"] = True
+    return key_data
+
+
 async def list_virtual_keys() -> list[dict]:
     """List all LiteLLM virtual keys."""
     async with httpx.AsyncClient(timeout=10) as client:
@@ -139,7 +206,7 @@ async def list_virtual_keys() -> list[dict]:
 
 
 async def get_key_info(token: str) -> Optional[dict]:
-    """Get info about a specific LiteLLM key."""
+    """Get info about a specific virtual key."""
     if not token:
         return None
 

@@ -396,7 +396,8 @@ def create_deployment(ns: str, litellm_key: Optional[str] = None) -> None:
         volume_mounts.append(
             client.V1VolumeMount(
                 name="hermes-config",
-                mount_path="/root/.hermes",
+                mount_path="/root/.hermes/config.yaml",
+                sub_path="config.yaml",
                 read_only=True,
             ),
         )
