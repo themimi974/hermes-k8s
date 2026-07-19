@@ -28,7 +28,11 @@ def generate_config(models: list[ModelRecord]) -> str:
             continue
 
         # Build litellm_params
-        params: dict = {"model": m.model_id}
+        # OpenAI-compatible APIs need the openai/ prefix
+        if m.api_type == "openai":
+            params: dict = {"model": f"openai/{m.model_id}"}
+        else:
+            params: dict = {"model": m.model_id}
 
         if m.api_key:
             # Key provided — use it directly
