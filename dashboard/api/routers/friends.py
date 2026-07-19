@@ -59,6 +59,7 @@ async def _update_friend_config(name: str, friend_record: FriendRecord):
 
     Recomputes the merged model list from assigned groups and updates
     the ConfigMap so Hermes points at the correct default model.
+    Also creates missing k8s resources (ConfigMap, Secret, volume mounts).
     """
     ns = f"friend-{name}"
     try:
@@ -70,7 +71,12 @@ async def _update_friend_config(name: str, friend_record: FriendRecord):
 
         # Update ConfigMap with new model + key
         if friend_record.litellm_key:
-            k8s.update_hermes_configmap(ns, default_model, friend_record.litellm_key)
+            # Create ConfigMap if missing, then update
+            k8s.create_hermes_configmap(ns, default_model, friend_record.litellm_key)
+            # Create Secret if missing
+            k8s.create_litellm_secret(ns, friend_record.litellm_key)
+            # Ensure deployment has volume mounts
+            k8s.ensure_deployment_volume_mounts(ns, friend_record.litellm_key)
             # Restart pod to pick up changes
             k8s.restart_deployment(ns)
             logger.info(f"Updated hermes config + restarted pod for '{name}' (model: {default_model})")

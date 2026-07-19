@@ -351,6 +351,76 @@ def restart_deployment(ns: str, name: str = "ttyd") -> None:
         logger.warning(f"Failed to restart deployment {name} in {ns}: {e}")
 
 
+def ensure_deployment_volume_mounts(ns: str, litellm_key: str, name: str = "ttyd") -> None:
+    """Ensure the deployment has hermes-config volume mount and LITELLM_API_KEY env var.
+
+    If the deployment was created without litellm_key (e.g. friend created before
+    budget group assignment), this adds the missing volume mounts and env vars.
+    """
+    try:
+        dep = apps_v1.read_namespaced_deployment(name=name, namespace=ns)
+        container = dep.spec.template.spec.containers[0]
+
+        # Check if hermes-config volume already exists
+        existing_volumes = [v.name for v in (dep.spec.template.spec.volumes or [])]
+        existing_mounts = [m.name for m in (container.volume_mounts or [])]
+        existing_envs = [e.name for e in (container.env or [])]
+
+        needs_update = False
+
+        # Add hermes-config volume if missing
+        if "hermes-config" not in existing_volumes:
+            if not dep.spec.template.spec.volumes:
+                dep.spec.template.spec.volumes = []
+            dep.spec.template.spec.volumes.append(
+                client.V1Volume(
+                    name="hermes-config",
+                    config_map=client.V1ConfigMapVolumeSource(name="hermes-config"),
+                )
+            )
+            needs_update = True
+
+        # Add hermes-config volume mount if missing
+        if "hermes-config" not in existing_mounts:
+            if not container.volume_mounts:
+                container.volume_mounts = []
+            container.volume_mounts.append(
+                client.V1VolumeMount(
+                    name="hermes-config",
+                    mount_path="/root/.hermes/config.yaml",
+                    sub_path="config.yaml",
+                    read_only=True,
+                )
+            )
+            needs_update = True
+
+        # Add LITELLM_API_KEY env var if missing
+        if "LITELLM_API_KEY" not in existing_envs:
+            if not container.env:
+                container.env = []
+            container.env.append(
+                client.V1EnvVar(
+                    name="LITELLM_API_KEY",
+                    value_from=client.V1EnvVarSource(
+                        secret_key_ref=client.V1SecretKeySelector(
+                            name="friend-litellm-key",
+                            key="LITELLM_API_KEY",
+                        )
+                    ),
+                )
+            )
+            needs_update = True
+
+        if needs_update:
+            apps_v1.patch_namespaced_deployment(name=name, namespace=ns, body=dep)
+            logger.info(f"Updated deployment {name} in {ns} with volume mounts")
+        else:
+            logger.debug(f"Deployment {name} in {ns} already has required volume mounts")
+
+    except client.exceptions.ApiException as e:
+        logger.warning(f"Failed to update deployment {name} in {ns}: {e}")
+
+
 # ── Deployment with config mounts ────────────────────────────────
 
 
