@@ -471,11 +471,11 @@ def create_deployment(ns: str, litellm_key: Optional[str] = None) -> None:
         ),
     ]
 
-    # Base volume mounts
+    # Base volume mounts — PVC at /root/.hermes so config is writable
     volume_mounts = [
         client.V1VolumeMount(
             name="friends-data",
-            mount_path="/opt/data",
+            mount_path="/root/.hermes",
         ),
     ]
 
@@ -483,23 +483,7 @@ def create_deployment(ns: str, litellm_key: Optional[str] = None) -> None:
     env_vars = []
 
     if litellm_key:
-        # Add hermes config ConfigMap volume
-        volumes.append(
-            client.V1Volume(
-                name="hermes-config",
-                config_map=client.V1ConfigMapVolumeSource(
-                    name="hermes-config",
-                ),
-            )
-        )
-        volume_mounts.append(
-            client.V1VolumeMount(
-                name="hermes-config",
-                mount_path="/root/.hermes/config.yaml",
-                sub_path="config.yaml",
-                read_only=True,
-            ),
-        )
+        # Config is written directly to PVC — no ConfigMap mount needed
 
         # Add LiteLLM key from Secret
         env_vars.append(
